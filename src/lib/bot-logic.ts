@@ -2,16 +2,81 @@
 'use server';
 
 import { z } from 'zod';
+import * as fs from 'fs/promises';
+import path from 'path';
 
 // ===== CONFIGURATION =====
 const config = {
     UPSTOX_API_KEY: "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: "3yn8j0huzj",
-    UPSTOX_REDIRECT_URI: "https://localhost.com", // Correct redirect URI
-    // Hardcoded for demo purposes, in a real app this would be managed securely
-    // TODO: PASTE YOUR NEW UPSTOX ACCESS TOKEN HERE
-    UPSTOX_ACCESS_TOKEN: "YOUR_ACCESS_TOKEN_HERE",
+    UPSTOX_REDIRECT_URI: "https://localhost.com",
 };
+
+const TOKEN_FILE_PATH = path.join(process.cwd(), 'upstox_access_token.json');
+
+// ===== API & TOKEN MANAGEMENT =====
+
+async function saveAccessToken(token: string) {
+    try {
+        await fs.writeFile(TOKEN_FILE_PATH, JSON.stringify({ accessToken: token, timestamp: new Date().toISOString() }));
+    } catch (error) {
+        console.error('Error saving access token:', error);
+        // In a serverless environment, we might not be able to write files.
+        // We can proceed without saving, but the token will be lost on restart.
+    }
+}
+
+async function getAccessToken(): Promise<string | null> {
+    try {
+        const data = await fs.readFile(TOKEN_FILE_PATH, 'utf-8');
+        const { accessToken } = JSON.parse(data);
+        return accessToken;
+    } catch (error) {
+        // File might not exist, which is fine.
+        return null;
+    }
+}
+
+async function exchangeCodeForToken(authCode: string): Promise<string | null> {
+    const url = "https://api-v2.upstox.com/login/authorization/token";
+    const headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json'
+    };
+    const body = new URLSearchParams({
+        'code': authCode,
+        'client_id': config.UPSTOX_API_KEY,
+        'client_secret': config.UPSTOX_API_SECRET,
+        'redirect_uri': config.UPSTOX_REDIRECT_URI,
+        'grant_type': 'authorization_code'
+    });
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: headers,
+            body: body.toString(),
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text();
+            console.error(`Token exchange failed with status ${response.status}: ${errorBody}`);
+            throw new Error(`Upstox token exchange failed. The code might be expired or invalid. Please try the 'auth' command again.`);
+        }
+
+        const data = await response.json();
+        const accessToken = data.access_token;
+        if (accessToken) {
+            await saveAccessToken(accessToken);
+            return accessToken;
+        }
+        return null;
+    } catch (error: any) {
+        console.error('Error exchanging code for token:', error);
+        throw error;
+    }
+}
+
 
 // ===== DATA STRUCTURES & SCHEMAS =====
 const OptionDataSchema = z.object({
@@ -69,18 +134,19 @@ export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload;
 
 // ===== API HELPERS =====
 class UpstoxAPI {
-    private static getHeaders() {
-        if (config.UPSTOX_ACCESS_TOKEN === "YOUR_ACCESS_TOKEN_HERE") {
+    private static async getHeaders() {
+        const accessToken = await getAccessToken();
+        if (!accessToken) {
              throw new Error("Upstox Access Token is not configured. Please use the 'auth' command.");
         }
         return {
-            "Authorization": `Bearer ${config.UPSTOX_ACCESS_TOKEN}`,
+            "Authorization": `Bearer ${accessToken}`,
             "Accept": "application/json"
         };
     }
 
     static async getExpiries(): Promise<Expiry[]> {
-        const headers = this.getHeaders();
+        const headers = await this.getHeaders();
         const url = "https://api.upstox.com/v2/option/contract?instrument_key=NSE_INDEX|Nifty%2050";
         try {
             const response = await fetch(url, { headers });
@@ -115,7 +181,7 @@ class UpstoxAPI {
     }
 
     static async getOptionChain(expiryDate: string): Promise<any> {
-        const headers = this.getHeaders();
+        const headers = await this.getHeaders();
         const url = `https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX|Nifty%2050&expiry_date=${expiryDate}`;
         try {
             const response = await fetch(url, { headers });
@@ -235,6 +301,22 @@ class MarketAnalyzer {
 export async function getBotResponse(message: string): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
 
+    // Handle Auth Code submission
+    // A simple check to see if the message could be an auth code.
+    if (lowerCaseMessage.length > 4 && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(' ')) {
+        try {
+            const accessToken = await exchangeCodeForToken(message);
+            if (accessToken) {
+                return { type: 'error', message: "✅ Authorization successful! You can now use the 'start' command." };
+            } else {
+                return { type: 'error', message: "❌ Authorization failed. The code might be invalid or expired. Please try '/auth' again." };
+            }
+        } catch (e: any) {
+             return { type: 'error', message: `❌ Authorization error: ${e.message}` };
+        }
+    }
+
+
     if (lowerCaseMessage.startsWith('start') || lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
         try {
             const expiries = await UpstoxAPI.getExpiries();
@@ -301,13 +383,14 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
 
 **How to use:**
 1. Use the **Auth** button or type \`auth\` to get a link to log into Upstox.
-2. After logging in, you'll be redirected. Copy the \`code\` from the URL.
-3. Paste the code into a new file called \`upstox_code.txt\` in the project's root directory.
-4. Restart the application. It will automatically use the code to get an access token.
+2. After logging in, you'll be redirected. Copy the \`code\` from the URL in the address bar.
+3. Paste the code directly into the chat here.
+4. The bot will automatically get an access token.
 5. Use the **Start** button or type \`start\` to begin your analysis.
 6. Click on an expiry date to get a detailed market analysis and trading opportunities.
 `;
-        return { type: 'error', message: helpText.replace(/`/g, '**') }; // Basic markdown conversion
+        // A simple markdown conversion for bolding
+        return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
     }
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
