@@ -8,6 +8,7 @@ const config = {
     UPSTOX_API_KEY: "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: "3yn8j0huzj",
     UPSTOX_REDIRECT_URI: "https://localhost.com",
+    NIFTY_LOT_SIZE: 50,
 };
 
 
@@ -54,11 +55,20 @@ async function exchangeCodeForToken(authCode: string): Promise<string> {
 
 
 // ===== DATA STRUCTURES & SCHEMAS =====
+
+const ScoreBreakdownSchema = z.object({
+    deltaScore: z.number(),
+    ivScore: z.number(),
+    liquidityScore: z.number(),
+    alignmentBonus: z.number(),
+});
+
 const OptionDataSchema = z.object({
     strike: z.number(),
     delta: z.number(),
     iv: z.number(),
     ltp: z.number(),
+    pop: z.number(),
     liquidity: z.object({
         grade: z.string(),
         score: z.number(),
@@ -70,10 +80,19 @@ const MarketAnalysisSchema = z.object({
     sentiment: z.string(),
     recommendation: z.string(),
     confidence: z.string(),
+    interpretation: z.string(),
+    tradingBias: z.string(),
     pcr_oi: z.number(),
     pcr_volume: z.number(),
 });
 export type MarketAnalysis = z.infer<typeof MarketAnalysisSchema>;
+
+const OpportunitySchema = OptionDataSchema.extend({
+    type: z.enum(['CE', 'PE']),
+    total_score: z.number(),
+    score_breakdown: ScoreBreakdownSchema,
+});
+export type Opportunity = z.infer<typeof OpportunitySchema>;
 
 const BasePayloadSchema = z.object({
     accessToken: z.string().optional(),
@@ -83,8 +102,15 @@ const AnalysisPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('analysis'),
     spotPrice: z.number(),
     dte: z.number(),
+    lotSize: z.number(),
+    expiry: z.string(),
+    timestamp: z.string(),
     marketAnalysis: MarketAnalysisSchema,
-    opportunities: z.array(OptionDataSchema.extend({ type: z.enum(['CE', 'PE']), total_score: z.number() })),
+    opportunities: z.array(OpportunitySchema),
+    qualifiedStrikes: z.object({
+        ce: z.array(OptionDataSchema.extend({type: z.literal("CE")})),
+        pe: z.array(OptionDataSchema.extend({type: z.literal("PE")})),
+    })
 });
 export type AnalysisPayload = z.infer<typeof AnalysisPayloadSchema>;
 
@@ -142,9 +168,9 @@ class UpstoxAPI {
 
             return allExpiries
                 .map(expiry => ({ expiry, date: new Date(expiry) }))
-                .filter(item => item.date >= today) // Filter out past expiries
-                .sort((a, b) => a.date.getTime() - b.date.getTime()) // Sort by date
-                .slice(0, 7) // Take the closest 7
+                .filter(item => item.date >= today)
+                .sort((a, b) => a.date.getTime() - b.date.getTime())
+                .slice(0, 7)
                 .map(item => {
                     const expDate = item.date;
                     const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
@@ -200,31 +226,33 @@ class MarketAnalyzer {
 
         for (const item of optionData.data) {
             if (item.expiry !== expiryDate) continue;
-
             totalCallOi += item.call_options?.market_data?.oi ?? 0;
             totalPutOi += item.put_options?.market_data?.oi ?? 0;
             totalCallVolume += item.call_options?.market_data?.volume ?? 0;
             totalPutVolume += item.put_options?.market_data?.volume ?? 0;
         }
 
-        const pcr_oi = totalCallOi > 0 ? totalPutOi / totalCallOi : 0;
-        const pcr_volume = totalCallVolume > 0 ? totalPutVolume / totalCallVolume : 0;
+        const pcr_oi = totalCallOi > 0 ? parseFloat((totalPutOi / totalCallOi).toFixed(3)) : 0;
+        const pcr_volume = totalCallVolume > 0 ? parseFloat((totalPutVolume / totalCallVolume).toFixed(3)) : 0;
         const weightedPcr = pcr_oi * 0.7 + pcr_volume * 0.3;
 
-        let sentiment = "Neutral", recommendation = "Mixed", confidence = "Low";
-        if (weightedPcr > 1.5) {
-            sentiment = "Bearish"; recommendation = "PE";
-            confidence = weightedPcr > 2.0 ? "High" : "Medium";
-        } else if (weightedPcr < 0.7) {
-            sentiment = "Bullish"; recommendation = "CE";
-            confidence = weightedPcr < 0.5 ? "High" : "Medium";
+        let sentiment = "Neutral", recommendation = "Mixed", confidence = "Low", interpretation = "Neutral market sentiment detected.", tradingBias = "Focus on non-directional strategies.";
+        
+        if (weightedPcr > 1.3) {
+            sentiment = "Bearish"; recommendation = "Consider PEs"; confidence = weightedPcr > 1.7 ? "High" : "Medium";
+            interpretation = "🐻 Bearish (More Put activity - expect downward pressure)";
+            tradingBias = "Focus on Bear Call Spreads or buying Puts.";
+        } else if (weightedPcr < 0.8) {
+            sentiment = "Bullish"; recommendation = "Consider CEs"; confidence = weightedPcr < 0.6 ? "High" : "Medium";
+            interpretation = "🐂 Bullish (More Call activity - expect upward pressure)";
+            tradingBias = "Focus on Bull Put Spreads or buying CEs.";
         }
 
-        return { sentiment, recommendation, confidence, pcr_oi: parseFloat(pcr_oi.toFixed(3)), pcr_volume: parseFloat(pcr_volume.toFixed(3)) };
+        return { sentiment, recommendation, confidence, pcr_oi, pcr_volume, interpretation, tradingBias };
     }
 
     static findOpportunities(optionChain: any[], spotPrice: number, dte: number, marketAnalysis: MarketAnalysis) {
-        const opportunities: (OptionData & { type: 'CE' | 'PE', total_score: number })[] = [];
+        const allOptions: (Opportunity | (OptionData & {type: 'CE' | 'PE'}))[] = [];
 
         for (const item of optionChain) {
             const strike = item.strike_price;
@@ -232,46 +260,61 @@ class MarketAnalyzer {
             const ceData = item.call_options;
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
-                 if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
-                    const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                    const iv = (ceData.option_greeks?.iv ?? 0.2) * 100;
-                    const deltaScore = 10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1));
-                    const ivScore = Math.min(iv / 3, 10);
-                    const alignmentBonus = 'CE' === marketAnalysis.recommendation ? 15 : 0;
-                    const total_score = deltaScore + ivScore + liquidity.score + alignmentBonus;
+                 const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
+                 const iv = (ceData.option_greeks?.iv ?? 0) * 100;
+                 const pop = (1 - Math.abs(delta)) * 100;
 
-                    opportunities.push({
-                        type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp,
-                        total_score: parseFloat(total_score.toFixed(1))
-                    });
+                 const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop };
+                 
+                 if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
+                    const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
+                    const ivScore = parseFloat(Math.min(iv / 3, 10).toFixed(1));
+                    const alignmentBonus = 'CE' === marketAnalysis.recommendation ? 15 : 0;
+                    const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
+                    
+                    const score_breakdown = { deltaScore, ivScore, liquidityScore: liquidity.score, alignmentBonus };
+                    allOptions.push({ ...option, total_score, score_breakdown });
+                 } else {
+                    allOptions.push(option);
                  }
             }
 
             const peData = item.put_options;
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
+                 const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
+                 const iv = (peData.option_greeks?.iv ?? 0) * 100;
+                 const pop = (1-Math.abs(delta)) * 100;
+                 
+                 const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop };
+
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
-                    const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                    const iv = (peData.option_greeks?.iv ?? 0.2) * 100;
-                    const deltaScore = 10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1));
-                    const ivScore = Math.min(iv / 3, 10);
+                    const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
+                    const ivScore = parseFloat(Math.min(iv / 3, 10).toFixed(1));
                     const alignmentBonus = 'PE' === marketAnalysis.recommendation ? 15 : 0;
-                    const total_score = deltaScore + ivScore + liquidity.score + alignmentBonus;
-                    
-                    opportunities.push({
-                        type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp,
-                        total_score: parseFloat(total_score.toFixed(1))
-                    });
+                    const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
+                    const score_breakdown = { deltaScore, ivScore, liquidityScore: liquidity.score, alignmentBonus };
+                    allOptions.push({ ...option, total_score, score_breakdown });
+                 } else {
+                    allOptions.push(option);
                  }
             }
         }
         
+        const opportunities = allOptions.filter(o => 'total_score' in o) as Opportunity[];
         opportunities.sort((a, b) => b.total_score - a.total_score);
+
+        const qualifiedStrikes = {
+            ce: allOptions.filter(o => o.type === 'CE' && Math.abs(o.delta) >= 0.15 && Math.abs(o.delta) <= 0.25) as (OptionData & {type: 'CE'})[],
+            pe: allOptions.filter(o => o.type === 'PE' && Math.abs(o.delta) >= 0.15 && Math.abs(o.delta) <= 0.25) as (OptionData & {type: 'PE'})[],
+        }
         
         const top_ce = opportunities.find(o => o.type === 'CE');
         const top_pe = opportunities.find(o => o.type === 'PE');
 
-        return [top_ce, top_pe].filter(Boolean) as (OptionData & { type: 'CE' | 'PE', total_score: number })[];
+        const topOpportunities = [top_ce, top_pe].filter(Boolean) as Opportunity[];
+
+        return { topOpportunities, qualifiedStrikes };
     }
 }
 
@@ -284,6 +327,7 @@ class MarketAnalyzer {
 export async function getBotResponse(message: string, token: string | null | undefined): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
 
+    // Command processing
     if (lowerCaseMessage.startsWith('start')) {
         try {
             const expiries = await UpstoxAPI.getExpiries(token);
@@ -294,41 +338,6 @@ export async function getBotResponse(message: string, token: string | null | und
                 return { type: 'error', message: e.message, authUrl };
             }
             return { type: 'error', message: `Failed to fetch expiries: ${e.message}` };
-        }
-    }
-
-    if (lowerCaseMessage.startsWith('exp:')) {
-        const expiry = lowerCaseMessage.split(':')[1];
-        try {
-            const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
-            if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
-                return { type: 'error', message: `No option chain data found for ${expiry}.`, accessToken: token ?? undefined };
-            }
-
-            const spotPrice = optionChain.data[0]?.underlying_spot_price ?? 0;
-            const expDate = new Date(expiry);
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
-            
-            const marketAnalysis = MarketAnalyzer.analyzePcr(optionChain, expiry);
-            const opportunities = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis);
-
-            return {
-                type: 'analysis',
-                spotPrice,
-                dte,
-                marketAnalysis,
-                opportunities,
-                accessToken: token ?? undefined
-            };
-
-        } catch (e: any) {
-             if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
-                 const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
-                return { type: 'error', message: e.message, authUrl };
-            }
-            return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}` };
         }
     }
 
@@ -359,8 +368,50 @@ export async function getBotResponse(message: string, token: string | null | und
         return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
     }
 
+    if (lowerCaseMessage.startsWith('exp:')) {
+        const expiry = lowerCaseMessage.split(':')[1];
+        try {
+            const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
+            if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
+                return { type: 'error', message: `No option chain data found for ${expiry}.`, accessToken: token ?? undefined };
+            }
+
+            const spotPrice = optionChain.data[0]?.underlying_spot_price ?? 0;
+            const expDate = new Date(expiry);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+            
+            const marketAnalysis = MarketAnalyzer.analyzePcr(optionChain, expiry);
+            const { topOpportunities, qualifiedStrikes } = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis);
+            
+            const timestamp = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+
+            return {
+                type: 'analysis',
+                spotPrice,
+                dte,
+                lotSize: config.NIFTY_LOT_SIZE,
+                expiry,
+                timestamp,
+                marketAnalysis,
+                opportunities: topOpportunities,
+                qualifiedStrikes,
+                accessToken: token ?? undefined
+            };
+
+        } catch (e: any) {
+             if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
+                 const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
+                return { type: 'error', message: e.message, authUrl };
+            }
+            return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}` };
+        }
+    }
+
+
     // Check if the message is a potential auth code.
-    const isAuthCode = /^[a-z0-9\-_]+$/i.test(lowerCaseMessage) && lowerCaseMessage.length > 3 && lowerCaseMessage.length < 50;
+    const isAuthCode = /^[a-z0-9]+$/i.test(lowerCaseMessage) && !lowerCaseMessage.startsWith('exp:') && lowerCaseMessage.length > 3 && lowerCaseMessage.length < 50;
 
     if (isAuthCode) {
         try {
