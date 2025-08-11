@@ -147,7 +147,7 @@ const ExpirySchema = z.object({
     value: z.string(),
     label: z.string(),
 });
-export type Expiry = z.infer<ExpirySchema>;
+export type Expiry = z.infer<typeof ExpirySchema>;
 
 const ExpiryPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('expiries'),
@@ -250,22 +250,27 @@ class UpstoxAPI {
         }
     }
 
-    static async getLTP(accessToken: string | null | undefined, instrumentKey: string): Promise<number> {
-        const headers = this.getHeaders(accessToken);
-        const url = `https://api-v2.upstox.com/v2/market-quote/ltp?instrument_key=${encodeURIComponent(instrumentKey)}`;
+    static async getLTP(accessToken: string | null | undefined, expiryDate: string, strike: number, optionType: 'CE' | 'PE'): Promise<number> {
         try {
-            const response = await fetch(url, { headers });
-            if (!response.ok) {
-                 if (response.status === 401) {
-                     throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
-                 }
-                throw new Error(`Upstox API error fetching LTP: ${response.statusText}`);
+            const optionChain = await this.getOptionChain(accessToken, expiryDate);
+            const targetStrike = parseFloat(strike.toString());
+
+            const strikeData = optionChain.data.find((d: any) => d.strike_price === targetStrike);
+            if (!strikeData) {
+                console.error(`Strike ${targetStrike} not found in option chain for ${expiryDate}`);
+                return 0;
             }
-            const data = await response.json();
-            return data.data[instrumentKey]?.last_price ?? 0;
+
+            const optionDetails = optionType === 'CE' ? strikeData.call_options : strikeData.put_options;
+            if (!optionDetails || !optionDetails.market_data) {
+                console.error(`No ${optionType} market data for strike ${targetStrike}`);
+                return 0;
+            }
+
+            return optionDetails.market_data.last_price ?? 0;
         } catch (error: any) {
-            console.error(`Error fetching LTP for ${instrumentKey}:`, error);
-            throw error;
+            console.error(`Error fetching LTP for ${optionType} ${strike} @ ${expiryDate}:`, error);
+            throw error; // Re-throw to be caught by the caller
         }
     }
 }
@@ -590,18 +595,19 @@ export async function getBotResponse(message: string, token: string | null | und
                 return { type: 'error', message: `Position #${positionIdToClose} not found in your portfolio.`, portfolio };
             }
             
-            const exitPrice = await UpstoxAPI.getLTP(token, positionToClose.instrumentKey);
+            try {
+                const exitPrice = await UpstoxAPI.getLTP(token, positionToClose.expiry, positionToClose.strike, positionToClose.type);
 
-            if(exitPrice === 0) {
-                 return { type: 'error', message: `Could not fetch live price for ${positionToClose.type} ${positionToClose.strike}. Cannot close position.`, portfolio };
-            }
+                if(exitPrice === 0) {
+                    return { type: 'error', message: `Could not fetch live price for ${positionToClose.type} ${positionToClose.strike}. Cannot close position.`, portfolio };
+                }
 
-            const pnl = (positionToClose.entryPrice - exitPrice) * positionToClose.quantity * config.NIFTY_LOT_SIZE * (positionToClose.action === 'SELL' ? 1 : -1);
+                const pnl = (positionToClose.entryPrice - exitPrice) * positionToClose.quantity * config.NIFTY_LOT_SIZE * (positionToClose.action === 'SELL' ? 1 : -1);
 
-            const updatedPositions = portfolio.positions.filter(p => p.id !== positionIdToClose);
-            const updatedPortfolio = { ...portfolio, positions: updatedPositions, realizedPnL: portfolio.realizedPnL + pnl };
+                const updatedPositions = portfolio.positions.filter(p => p.id !== positionIdToClose);
+                const updatedPortfolio = { ...portfolio, positions: updatedPositions, realizedPnL: portfolio.realizedPnL + pnl };
 
-            const closeMessage = `**🔒 Position Closed Successfully**
+                const closeMessage = `**🔒 Position Closed Successfully**
 - **Trade ID:** ${positionToClose.id}
 - **Position:** ${positionToClose.action} ${positionToClose.quantity} lot(s)
 - **Option:** ${positionToClose.type} ${positionToClose.strike.toFixed(1)}
@@ -611,13 +617,16 @@ export async function getBotResponse(message: string, token: string | null | und
 
 - **Portfolio:** Rs. ${(updatedPortfolio.initialFunds + updatedPortfolio.realizedPnL).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 - **Total P&L:** Rs. ${updatedPortfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-            
-            return {
-                type: 'close-position',
-                message: closeMessage,
-                accessToken: token ?? undefined,
-                portfolio: updatedPortfolio
-            };
+                
+                return {
+                    type: 'close-position',
+                    message: closeMessage,
+                    accessToken: token ?? undefined,
+                    portfolio: updatedPortfolio
+                };
+            } catch (e: any) {
+                 return { type: 'error', message: `Error closing position: ${e.message}`, portfolio };
+            }
     }
     
     if (mainCommand.startsWith('exp:')) {
