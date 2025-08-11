@@ -8,7 +8,8 @@ const config = {
     UPSTOX_API_KEY: "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: "3yn8j0huzj",
     // Hardcoded for demo purposes, in a real app this would be managed securely
-    UPSTOX_ACCESS_TOKEN: "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIxOTc0MTAiLCJqdGkiOiI2ODgzYzE2YWE4N2M5ZjQzNGNjNDA0MzUiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaWF0IjoxNzUzNDY1MTk0LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE3NTM0ODA4MDB9.rahDMQeZmTWkJZnBFJy7H2doN_OP1oFbqyLAzP3WFI8",
+    // TODO: PASTE YOUR NEW UPSTOX ACCESS TOKEN HERE
+    UPSTOX_ACCESS_TOKEN: "YOUR_ACCESS_TOKEN_HERE",
 };
 
 // ===== DATA STRUCTURES & SCHEMAS =====
@@ -264,9 +265,14 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
             return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}` };
         }
     }
+
+    if (lowerCaseMessage.startsWith('auth')) {
+        const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=https://localhost`;
+        return { type: 'error', message: `To get a new access token, please visit: ${authUrl} \n\nAfter authorizing, you will be redirected to a page that may show an error. Copy the 'code' from the URL and use a tool like Postman or curl to get your access token. Then, paste it into the bot-logic.ts file.` };
+    }
     
      if (lowerCaseMessage.includes('help')) {
-        return { type: 'error', message: "Please type 'start' to see available expiry dates, then click one to see the analysis." };
+        return { type: 'error', message: "This is a web-based version of the NIFTY options analysis bot. Here are the available commands:\n\n- `start`: Begins the analysis by showing available expiry dates.\n- `auth`: Provides instructions on how to get a new access token for the Upstox API.\n- `help`: Shows this help message.\n\nAfter starting, you can click on an expiry date to get a detailed market analysis and trading opportunities." };
     }
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
