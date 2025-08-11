@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
@@ -8,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from "@/hooks/use-toast";
 import ChatMessage, { type Message } from '@/components/chat-message';
 import { sendMessage } from './actions';
+import { BotResponsePayload } from '@/lib/bot-logic';
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -17,13 +19,13 @@ export default function Home() {
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setMessages([
-      {
-        id: 'initial-bot-message',
+    // Initial message from the bot
+     const initialBotMessage: Message = {
+        id: crypto.randomUUID(),
         role: 'bot',
-        content: 'Hello! I am Webot. How can I help you today?',
-      },
-    ]);
+        content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' to begin.",
+      };
+    setMessages([initialBotMessage]);
   }, []);
 
   useEffect(() => {
@@ -32,40 +34,63 @@ export default function Home() {
     }
   }, [messages]);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const trimmedInput = input.trim();
+  const processAndSetMessages = (userInput: string, response: BotResponsePayload) => {
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: userInput,
+    };
+
+    const botMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'bot',
+      content: '', // Content will be handled by payload renderer
+      payload: response,
+    };
+
+    if (response.type === 'error') {
+        botMessage.content = response.message;
+        botMessage.payload = undefined; // Don't render a payload for errors
+    } else if (response.type === 'expiries') {
+        botMessage.content = "Here are the available expiry dates for NIFTY 50.";
+    } else if (response.type === 'analysis') {
+        botMessage.content = `Analysis for expiry ${response.opportunities[0]?.strike ? `around strike ${response.opportunities[0].strike}` : ''}:`;
+    }
+
+    setMessages(prev => [...prev, userMessage, botMessage]);
+  }
+  
+  const handleSendMessage = (messageText: string) => {
+    const trimmedInput = messageText.trim();
     if (!trimmedInput || isPending) return;
 
-    const userMessage: Message = {
+    // Add user message optimistically, but we'll re-add it in processAndSetMessages
+    // to keep the order correct. This just clears the input field.
+    const tempUserMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
       content: trimmedInput,
     };
-
-    setMessages(prev => [...prev, userMessage]);
+    setMessages(prev => [...prev, tempUserMessage]);
     setInput('');
-
+    
     startTransition(async () => {
+      // Remove the temp message
+      setMessages(prev => prev.slice(0, prev.length-1));
+
       const result = await sendMessage(trimmedInput);
-      if (result.error) {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: result.error,
-        });
-        // Optionally remove the user message if the bot fails to respond
-        // setMessages(prev => prev.slice(0, prev.length - 1));
-      } else if (result.response) {
-        const botMessage: Message = {
-          id: crypto.randomUUID(),
-          role: 'bot',
-          content: result.response,
-        };
-        setMessages(prev => [...prev, botMessage]);
-      }
+      processAndSetMessages(trimmedInput, result);
     });
+  }
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    handleSendMessage(input);
   };
+  
+  const handleExpirySelect = (expiry: string) => {
+      handleSendMessage(`exp:${expiry}`);
+  }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
@@ -75,16 +100,16 @@ export default function Home() {
             <Bot className="w-8 h-8 text-primary" />
             <div>
               <CardTitle className="text-2xl font-bold font-headline">Webot</CardTitle>
-              <CardDescription>Your personal web-based chat assistant</CardDescription>
+              <CardDescription>Professional NIFTY Options Analysis</CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6">
           {messages.map((msg) => (
-            <ChatMessage key={msg.id} {...msg} />
+            <ChatMessage key={msg.id} {...msg} onExpirySelect={handleExpirySelect} />
           ))}
           {isPending && (
-             <ChatMessage id="thinking" role="bot" content={<div className="flex items-center gap-2"><Loader className="w-4 h-4 animate-spin" /> Thinking...</div>} />
+             <ChatMessage id="thinking" role="bot" content={<div className="flex items-center gap-2"><Loader className="w-4 h-4 animate-spin" /> Thinking...</div>} onExpirySelect={() => {}} />
           )}
         </CardContent>
         <div className="border-t p-4 bg-background/80 backdrop-blur-sm rounded-b-2xl">
@@ -92,7 +117,7 @@ export default function Home() {
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
+              placeholder="Type 'start' to begin..."
               className="flex-1 bg-white dark:bg-slate-800"
               disabled={isPending}
               aria-label="Chat input"

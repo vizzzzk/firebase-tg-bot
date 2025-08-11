@@ -1,29 +1,273 @@
+
+'use server';
+
+import { z } from 'zod';
+
+// ===== CONFIGURATION =====
+const config = {
+    UPSTOX_API_KEY: "226170d8-02ff-47d2-bb74-3611749f4d8d",
+    UPSTOX_API_SECRET: "3yn8j0huzj",
+    // Hardcoded for demo purposes, in a real app this would be managed securely
+    UPSTOX_ACCESS_TOKEN: "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIxOTc0MTAiLCJqdGkiOiI2ODgzYzE2YWE4N2M5ZjQzNGNjNDA0MzUiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaWF0IjoxNzUzNDY1MTk0LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE3NTM0ODA4MDB9.rahDMQeZmTWkJZnBFJy7H2doN_OP1oFbqyLAzP3WFI8",
+};
+
+// ===== DATA STRUCTURES & SCHEMAS =====
+const OptionDataSchema = z.object({
+    strike: z.number(),
+    delta: z.number(),
+    iv: z.number(),
+    ltp: z.number(),
+    liquidity: z.object({
+        grade: z.string(),
+        score: z.number(),
+    }),
+});
+export type OptionData = z.infer<typeof OptionDataSchema>;
+
+const MarketAnalysisSchema = z.object({
+    sentiment: z.string(),
+    recommendation: z.string(),
+    confidence: z.string(),
+    pcr_oi: z.number(),
+    pcr_volume: z.number(),
+});
+export type MarketAnalysis = z.infer<typeof MarketAnalysisSchema>;
+
+const AnalysisPayloadSchema = z.object({
+    type: z.literal('analysis'),
+    spotPrice: z.number(),
+    dte: z.number(),
+    marketAnalysis: MarketAnalysisSchema,
+    opportunities: z.array(OptionDataSchema.extend({ type: z.enum(['CE', 'PE']), total_score: z.number() })),
+});
+export type AnalysisPayload = z.infer<typeof AnalysisPayloadSchema>;
+
+const ExpirySchema = z.object({
+    value: z.string(),
+    label: z.string(),
+});
+export type Expiry = z.infer<typeof ExpirySchema>;
+
+const ExpiryPayloadSchema = z.object({
+    type: z.literal('expiries'),
+    expiries: z.array(ExpirySchema),
+});
+export type ExpiryPayload = z.infer<typeof ExpiryPayloadSchema>;
+
+const ErrorPayloadSchema = z.object({
+    type: z.literal('error'),
+    message: z.string(),
+});
+export type ErrorPayload = z.infer<typeof ErrorPayloadSchema>;
+
+
+export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload;
+
+
+// ===== API HELPERS =====
+class UpstoxAPI {
+    private static getHeaders() {
+        return {
+            "Authorization": `Bearer ${config.UPSTOX_ACCESS_TOKEN}`,
+            "Accept": "application/json"
+        };
+    }
+
+    static async getExpiries(): Promise<Expiry[]> {
+        const headers = this.getHeaders();
+        const url = "https://api.upstox.com/v2/option/contract?instrument_key=NSE_INDEX|Nifty%2050";
+        try {
+            const response = await fetch(url, { headers });
+            if (!response.ok) {
+                throw new Error(`Upstox API error: ${response.statusText}`);
+            }
+            const data = await response.json();
+            const expiryDates: string[] = Array.from(new Set(data.data.map((item: any) => item.expiry))).slice(0, 7) as string[];
+
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            return expiryDates.sort().map(expiry => {
+                const expDate = new Date(expiry);
+                const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+
+                // Simple monthly check
+                const isMonthly = new Date(expDate.getFullYear(), expDate.getMonth() + 1, 0).getDate() - expDate.getDate() < 7;
+                const label = isMonthly ? "(M)" : "(W)";
+
+                return {
+                    value: expiry,
+                    label: `${expiry} ${label} DTE: ${dte}`
+                };
+            });
+        } catch (error) {
+            console.error("Error fetching expiries:", error);
+            throw error;
+        }
+    }
+
+    static async getOptionChain(expiryDate: string): Promise<any> {
+        const headers = this.getHeaders();
+        const url = `https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX|Nifty%2050&expiry_date=${expiryDate}`;
+        try {
+            const response = await fetch(url, { headers });
+            if (!response.ok) {
+                throw new Error(`Upstox API error: ${response.statusText}`);
+            }
+            return await response.json();
+        } catch (error) {
+            console.error(`Error fetching option chain for ${expiryDate}:`, error);
+            throw error;
+        }
+    }
+}
+
+// ===== ANALYSIS LOGIC =====
+class MarketAnalyzer {
+    static calculateLiquidityScore(volume: number, oi: number) {
+        const volumeScore = Math.min(volume / 1000, 10);
+        const oiScore = Math.min(oi / 10000, 10);
+        const totalScore = volumeScore + oiScore;
+        let grade = "Poor";
+        if (totalScore >= 15) grade = "Excellent";
+        else if (totalScore >= 10) grade = "Good";
+        else if (totalScore >= 5) grade = "Fair";
+        return { score: Math.round(totalScore, 1), grade };
+    }
+
+    static analyzePcr(optionData: any, expiryDate: string): MarketAnalysis {
+        let totalCallOi = 0, totalPutOi = 0, totalCallVolume = 0, totalPutVolume = 0;
+
+        for (const item of optionData.data) {
+            if (item.expiry !== expiryDate) continue;
+
+            totalCallOi += item.call_options?.market_data?.oi ?? 0;
+            totalPutOi += item.put_options?.market_data?.oi ?? 0;
+            totalCallVolume += item.call_options?.market_data?.volume ?? 0;
+            totalPutVolume += item.put_options?.market_data?.volume ?? 0;
+        }
+
+        const pcr_oi = totalCallOi > 0 ? totalPutOi / totalCallOi : 0;
+        const pcr_volume = totalCallVolume > 0 ? totalPutVolume / totalCallVolume : 0;
+        const weightedPcr = pcr_oi * 0.7 + pcr_volume * 0.3;
+
+        let sentiment = "Neutral", recommendation = "Mixed", confidence = "Low";
+        if (weightedPcr > 1.5) {
+            sentiment = "Bearish"; recommendation = "PE";
+            confidence = weightedPcr > 2.0 ? "High" : "Medium";
+        } else if (weightedPcr < 0.7) {
+            sentiment = "Bullish"; recommendation = "CE";
+            confidence = weightedPcr < 0.5 ? "High" : "Medium";
+        }
+
+        return { sentiment, recommendation, confidence, pcr_oi: parseFloat(pcr_oi.toFixed(3)), pcr_volume: parseFloat(pcr_volume.toFixed(3)) };
+    }
+
+    static findOpportunities(optionChain: any[], spotPrice: number, dte: number, marketAnalysis: MarketAnalysis) {
+        const opportunities: (OptionData & { type: 'CE' | 'PE', total_score: number })[] = [];
+
+        for (const item of optionChain) {
+            const strike = item.strike_price;
+
+            const ceData = item.call_options;
+            if (ceData?.market_data?.ltp > 0) {
+                 const delta = ceData.option_greeks?.delta ?? 0;
+                 if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
+                    const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
+                    const iv = (ceData.option_greeks?.iv ?? 0.2) * 100;
+                    const deltaScore = 10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1));
+                    const ivScore = Math.min(iv / 3, 10);
+                    const alignmentBonus = 'CE' === marketAnalysis.recommendation ? 15 : 0;
+                    const total_score = deltaScore + ivScore + liquidity.score + alignmentBonus;
+
+                    opportunities.push({
+                        type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp,
+                        total_score: parseFloat(total_score.toFixed(1))
+                    });
+                 }
+            }
+
+            const peData = item.put_options;
+            if (peData?.market_data?.ltp > 0) {
+                 const delta = peData.option_greeks?.delta ?? 0;
+                 if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
+                    const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
+                    const iv = (peData.option_greeks?.iv ?? 0.2) * 100;
+                    const deltaScore = 10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1));
+                    const ivScore = Math.min(iv / 3, 10);
+                    const alignmentBonus = 'PE' === marketAnalysis.recommendation ? 15 : 0;
+                    const total_score = deltaScore + ivScore + liquidity.score + alignmentBonus;
+                    
+                    opportunities.push({
+                        type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp,
+                        total_score: parseFloat(total_score.toFixed(1))
+                    });
+                 }
+            }
+        }
+        
+        opportunities.sort((a, b) => b.total_score - a.total_score);
+        
+        const top_ce = opportunities.find(o => o.type === 'CE');
+        const top_pe = opportunities.find(o => o.type === 'PE');
+
+        return [top_ce, top_pe].filter(Boolean) as (OptionData & { type: 'CE' | 'PE', total_score: number })[];
+    }
+}
+
+
 /**
- * Simulates a bot's response logic.
+ * Main logic function to get bot response.
  * @param message The user's input message.
- * @returns A promise that resolves to the bot's string response.
+ * @returns A promise that resolves to the bot's response payload.
  */
-export async function getBotResponse(message: string): Promise<string> {
-  // Simulate network/processing delay
-  await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
+export async function getBotResponse(message: string): Promise<BotResponsePayload> {
+    const lowerCaseMessage = message.toLowerCase().trim();
 
-  const lowerCaseMessage = message.toLowerCase().trim();
+    // Initial greeting or help
+    if (lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
+        try {
+            const expiries = await UpstoxAPI.getExpiries();
+            return { type: 'expiries', expiries };
+        } catch (e: any) {
+            return { type: 'error', message: `Failed to fetch expiries: ${e.message}` };
+        }
+    }
 
-  if (lowerCaseMessage.includes('hello') || lowerCaseMessage.includes('hi')) {
-    return "Hello there! It's a pleasure to connect with you.";
-  }
+    // Handle expiry selection
+    if (lowerCaseMessage.startsWith('exp:')) {
+        const expiry = lowerCaseMessage.split(':')[1];
+        try {
+            const optionChain = await UpstoxAPI.getOptionChain(expiry);
+            if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
+                return { type: 'error', message: `No option chain data found for ${expiry}.` };
+            }
 
-  if (lowerCaseMessage.includes('how are you')) {
-    return "I'm just a set of algorithms, but I'm operating at peak efficiency! Thanks for asking.";
-  }
-  
-  if (lowerCaseMessage.includes('help')) {
-    return "I can respond to basic greetings like 'hello' and questions like 'how are you?'. I am a simple echo bot for anything else. Try asking me something!";
-  }
+            const spotPrice = optionChain.data[0]?.underlying_spot_price ?? 0;
+            const expDate = new Date(expiry);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+            
+            const marketAnalysis = MarketAnalyzer.analyzePcr(optionChain, expiry);
+            const opportunities = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis);
 
-  if (lowerCaseMessage.includes('what can you do')) {
-    return "I'm a demonstration of how a Telegram bot can be adapted into a web interface. You can ask me for 'help' to see what I respond to.";
-  }
+            return {
+                type: 'analysis',
+                spotPrice,
+                dte,
+                marketAnalysis,
+                opportunities,
+            };
 
-  return `You said: "${message}". As a simple bot, I'm just echoing your message back to you.`;
+        } catch (e: any) {
+            return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}` };
+        }
+    }
+    
+     if (lowerCaseMessage.includes('help')) {
+        return { type: 'error', message: "Please type 'start' to see available expiry dates, then click one to see the analysis." };
+    }
+
+    return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
