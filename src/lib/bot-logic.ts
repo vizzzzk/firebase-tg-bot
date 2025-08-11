@@ -11,9 +11,26 @@ const config = {
     NIFTY_LOT_SIZE: 50,
 };
 
+// ===== PORTFOLIO MANAGEMENT =====
+
+const PositionSchema = z.object({
+    id: z.number(),
+    type: z.enum(['CE', 'PE']),
+    strike: z.number(),
+    action: z.enum(['BUY', 'SELL']),
+    quantity: z.number(),
+    entryPrice: z.number(),
+    expiry: z.string(),
+    entryTimestamp: z.string(),
+});
+export type Position = z.infer<typeof PositionSchema>;
+
+const PortfolioSchema = z.object({
+  positions: z.array(PositionSchema),
+});
+export type Portfolio = z.infer<typeof PortfolioSchema>;
 
 // ===== API & TOKEN MANAGEMENT =====
-
 async function exchangeCodeForToken(authCode: string): Promise<string> {
     const url = "https://api-v2.upstox.com/login/authorization/token";
     const headers = {
@@ -53,9 +70,7 @@ async function exchangeCodeForToken(authCode: string): Promise<string> {
     }
 }
 
-
 // ===== DATA STRUCTURES & SCHEMAS =====
-
 const ScoreBreakdownSchema = z.object({
     deltaScore: z.number(),
     ivScore: z.number(),
@@ -102,6 +117,7 @@ export type TradeRecommendation = z.infer<typeof TradeRecommendationSchema>;
 
 const BasePayloadSchema = z.object({
     accessToken: z.string().optional(),
+    portfolio: PortfolioSchema.optional(),
 });
 
 const AnalysisPayloadSchema = BasePayloadSchema.extend({
@@ -131,7 +147,7 @@ const ExpiryPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('expiries'),
     expiries: z.array(ExpirySchema),
 });
-export type ExpiryPayload = z.infer<typeof ExpiryPayloadSchema>;
+export type ExpiryPayload = z.infer<ExpiryPayloadSchema>;
 
 const ErrorPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('error'),
@@ -146,8 +162,17 @@ const PaperTradePayloadSchema = BasePayloadSchema.extend({
 });
 export type PaperTradePayload = z.infer<typeof PaperTradePayloadSchema>;
 
-export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload | PaperTradePayload;
+const PortfolioPayloadSchema = BasePayloadSchema.extend({
+    type: z.literal('portfolio'),
+    message: z.string(),
+});
 
+const ClosePositionPayloadSchema = BasePayloadSchema.extend({
+    type: z.literal('close-position'),
+    message: z.string(),
+});
+
+export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload | PaperTradePayload | PortfolioPayloadSchema | ClosePositionPayloadSchema;
 
 // ===== API HELPERS =====
 class UpstoxAPI {
@@ -294,10 +319,11 @@ class MarketAnalyzer {
         return { reason, tradeCommand };
     }
 
-    static findOpportunities(optionChain: any[], spotPrice: number, dte: number, marketAnalysis: MarketAnalysis) {
+    static findOpportunities(optionChain: any[], spotPrice: number, dte: number, marketAnalysis: MarketAnalysis, expiry: string) {
         const allOptions: (Opportunity | (OptionData & {type: 'CE' | 'PE'}))[] = [];
 
         for (const item of optionChain) {
+            if (item.expiry !== expiry) continue;
             const strike = item.strike_price;
 
             const ceData = item.call_options;
@@ -363,40 +389,41 @@ class MarketAnalyzer {
     }
 }
 
-
 /**
  * Main logic function to get bot response.
  * @param message The user's input message.
  * @returns A promise that resolves to the bot's response payload.
  */
-export async function getBotResponse(message: string, token: string | null | undefined): Promise<BotResponsePayload> {
+export async function getBotResponse(message: string, token: string | null | undefined, portfolio: Portfolio): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
     const command = message.trim();
-
+    const parts = command.split(' ');
+    const mainCommand = parts[0].toLowerCase();
+    
     // This is the most specific check. It should be first.
     // A typical auth code is a short alphanumeric string.
-    if (/^[a-z0-9]{6,50}$/i.test(command)) {
+    if (/^[a-z0-9]{6,50}$/i.test(command) && mainCommand !== 'start' && mainCommand !== 'auth' && mainCommand !== 'help' && !mainCommand.startsWith('exp:') && mainCommand !== '/paper' && mainCommand !== '/portfolio' && mainCommand !== '/close') {
         try {
             const newAccessToken = await exchangeCodeForToken(command);
             const expiries = await UpstoxAPI.getExpiries(newAccessToken);
-            return { type: 'expiries', expiries, accessToken: newAccessToken };
+            return { type: 'expiries', expiries, accessToken: newAccessToken, portfolio };
         } catch (e: any) {
-             return { type: 'error', message: `❌ Authorization error: ${e.message}` };
+             return { type: 'error', message: `❌ Authorization error: ${e.message}`, portfolio };
         }
     }
-
+    
     // Then, process other commands.
-    switch (lowerCaseMessage.split(' ')[0]) {
+    switch (mainCommand) {
         case 'start':
             try {
                 const expiries = await UpstoxAPI.getExpiries(token);
-                return { type: 'expiries', expiries, accessToken: token ?? undefined };
+                return { type: 'expiries', expiries, accessToken: token ?? undefined, portfolio };
             } catch (e: any) {
                 if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
                     const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
-                    return { type: 'error', message: e.message, authUrl };
+                    return { type: 'error', message: e.message, authUrl, portfolio };
                 }
-                return { type: 'error', message: `Failed to fetch expiries: ${e.message}` };
+                return { type: 'error', message: `Failed to fetch expiries: ${e.message}`, portfolio };
             }
 
         case 'auth':
@@ -404,7 +431,8 @@ export async function getBotResponse(message: string, token: string | null | und
             return { 
                 type: 'error', 
                 message: `To get a new access token, you need to authorize this application with Upstox. Click the link below.`, 
-                authUrl 
+                authUrl,
+                portfolio
             };
         
         case 'help':
@@ -426,32 +454,104 @@ export async function getBotResponse(message: string, token: string | null | und
 5. Click on an expiry date to get a detailed market analysis and trading opportunities.
 6. Use the paper trade commands from the analysis to simulate trades.
 `;
-            return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
-
+            return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**'), portfolio };
+            
         case '/paper':
-            const parts = command.split(' ');
             if (parts.length === 6) {
                 const [_, type, strike, action, qty, price] = parts;
+                
+                const newPosition: Position = {
+                    id: portfolio.positions.length + 1,
+                    type: type.toUpperCase() as 'CE' | 'PE',
+                    strike: parseFloat(strike),
+                    action: action.toUpperCase() as 'BUY' | 'SELL',
+                    quantity: parseInt(qty),
+                    entryPrice: parseFloat(price),
+                    expiry: '2025-09-30', // This should be dynamic based on last analysis
+                    entryTimestamp: new Date().toISOString(),
+                };
+
+                const updatedPortfolio = { ...portfolio, positions: [...portfolio.positions, newPosition] };
+                const premium = newPosition.entryPrice * newPosition.quantity * config.NIFTY_LOT_SIZE;
+
+                const message = `**🔒 Professional Paper Trade Executed**
+
+- **Trade ID:** ${newPosition.id}
+- **Position:** ${newPosition.action} ${newPosition.quantity} lot(s) (${newPosition.quantity * config.NIFTY_LOT_SIZE} units)
+- **Option:** ${newPosition.type} ${newPosition.strike.toFixed(1)}
+- **Entry Price:** Rs. ${newPosition.entryPrice.toFixed(2)}
+- **Expiry:** ${newPosition.expiry}
+- **Premium:** Rs. ${premium.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
                 return {
                     type: 'paper-trade',
-                    message: `✅ Paper trade executed: ${action.toUpperCase()} ${qty} lot(s) of ${strike} ${type.toUpperCase()} at ${price}.`,
+                    message,
                     accessToken: token ?? undefined,
+                    portfolio: updatedPortfolio,
                 };
             }
-             return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
+            return { type: 'error', message: "Invalid /paper command format. Expected: /paper [CE/PE] [STRIKE] [BUY/SELL] [QTY] [PRICE]", portfolio };
 
         case '/portfolio':
+            if (portfolio.positions.length === 0) {
+                 return {
+                    type: 'portfolio',
+                    message: `**🔒 Professional Paper Portfolio**
+- **Portfolio Value:** Rs. 0.00
+- **Total Realized P&L:** Rs. 0.00
+- **Open Positions:** 0`,
+                    accessToken: token ?? undefined,
+                    portfolio,
+                };
+            }
+
+            let portfolioMessage = `**🔒 Professional Paper Portfolio**\n\n`;
+            portfolio.positions.forEach(pos => {
+                portfolioMessage += `**Position #${pos.id}** (${pos.action} ${pos.quantity} lot)\n`;
+                portfolioMessage += `- **Option:** ${pos.type} ${pos.strike.toFixed(1)}\n`;
+                portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **Expiry:** ${pos.expiry}\n`;
+                portfolioMessage += `*To close, type: /close ${pos.id}*\n\n`;
+            });
+            
             return {
-                type: 'paper-trade',
-                message: `💼 Your Portfolio:\n• Value: Rs. 0.00\n• P&L: Rs. 0.00\n• Positions: 0 open`,
+                type: 'portfolio',
+                message: portfolioMessage,
                 accessToken: token ?? undefined,
+                portfolio,
             };
 
         case '/close':
+            const positionIdToClose = parseInt(parts[1]);
+            if (isNaN(positionIdToClose)) {
+                 return { type: 'error', message: "Please specify a position ID to close. Example: /close 1", portfolio };
+            }
+            
+            const positionToClose = portfolio.positions.find(p => p.id === positionIdToClose);
+
+            if (!positionToClose) {
+                return { type: 'error', message: `Position #${positionIdToClose} not found in your portfolio.`, portfolio };
+            }
+
+            // In a real scenario, you'd fetch the current LTP to calculate P&L
+            const exitPrice = positionToClose.entryPrice; // Simulate closing at the same price
+            const pnl = (positionToClose.entryPrice - exitPrice) * positionToClose.quantity * config.NIFTY_LOT_SIZE * (positionToClose.action === 'SELL' ? 1 : -1);
+
+            const updatedPositions = portfolio.positions.filter(p => p.id !== positionIdToClose);
+            const updatedPortfolio = { ...portfolio, positions: updatedPositions };
+
+            const closeMessage = `**🔒 Position Closed Successfully**
+- **Trade ID:** ${positionToClose.id}
+- **Position:** ${positionToClose.action} ${positionToClose.quantity} lot(s)
+- **Option:** ${positionToClose.type} ${positionToClose.strike.toFixed(1)}
+- **Entry:** Rs. ${positionToClose.entryPrice.toFixed(2)}
+- **Exit:** Rs. ${exitPrice.toFixed(2)} (Current LTP)
+- **P&L:** Rs. ${pnl.toFixed(2)} ${pnl >= 0 ? '✅ Profit' : '⚠️ Loss'}`;
+            
             return {
-                type: 'paper-trade',
-                message: `✅ No open positions to close.`,
+                type: 'close-position',
+                message: closeMessage,
                 accessToken: token ?? undefined,
+                portfolio: updatedPortfolio
             };
     }
     
@@ -460,7 +560,7 @@ export async function getBotResponse(message: string, token: string | null | und
         try {
             const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
             if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
-                return { type: 'error', message: `No option chain data found for ${expiry}.`, accessToken: token ?? undefined };
+                return { type: 'error', message: `No option chain data found for ${expiry}.`, accessToken: token ?? undefined, portfolio };
             }
 
             const spotPrice = optionChain.data[0]?.underlying_spot_price ?? 0;
@@ -470,7 +570,7 @@ export async function getBotResponse(message: string, token: string | null | und
             const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
             
             const marketAnalysis = MarketAnalyzer.analyzePcr(optionChain, expiry);
-            const { topOpportunities, qualifiedStrikes, tradeRecommendation } = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis);
+            const { topOpportunities, qualifiedStrikes, tradeRecommendation } = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis, expiry);
             
             const timestamp = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
 
@@ -485,17 +585,18 @@ export async function getBotResponse(message: string, token: string | null | und
                 opportunities: topOpportunities,
                 qualifiedStrikes,
                 tradeRecommendation,
-                accessToken: token ?? undefined
+                accessToken: token ?? undefined,
+                portfolio,
             };
 
         } catch (e: any) {
              if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
                  const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
-                return { type: 'error', message: e.message, authUrl };
+                return { type: 'error', message: e.message, authUrl, portfolio };
             }
-            return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}` };
+            return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}`, portfolio };
         }
     }
     
-    return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
+    return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }

@@ -9,12 +9,13 @@ import { Button } from '@/components/ui/button';
 import { useToast } from "@/hooks/use-toast";
 import ChatMessage, { type Message } from '@/components/chat-message';
 import { sendMessage } from './actions';
-import { BotResponsePayload } from '@/lib/bot-logic';
+import { BotResponsePayload, Portfolio } from '@/lib/bot-logic';
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [portfolio, setPortfolio] = useState<Portfolio>({ positions: [] });
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +54,10 @@ export default function Home() {
     if (response.accessToken) {
         setAccessToken(response.accessToken);
     }
+    
+    if (response.portfolio) {
+      setPortfolio(response.portfolio);
+    }
 
     if (response.type === 'error') {
         // For error messages, we display them directly. If there's an auth URL, we render it as a clickable link.
@@ -74,7 +79,7 @@ export default function Home() {
         botMessage.content = "Here are the available expiry dates for NIFTY 50.";
     } else if (response.type === 'analysis') {
         botMessage.content = `Analysis for expiry ${response.opportunities[0]?.strike ? `around strike ${response.opportunities[0].strike}` : ''}:`;
-    } else if (response.type === 'paper-trade') {
+    } else if (response.type === 'paper-trade' || response.type === 'portfolio' || response.type === 'close-position') {
         botMessage.content = response.message;
         botMessage.payload = undefined;
     }
@@ -99,7 +104,7 @@ export default function Home() {
       // Remove the optimistic user message to avoid duplication
       setMessages(prev => prev.slice(0, prev.length-1));
 
-      const result = await sendMessage(trimmedInput, accessToken);
+      const result = await sendMessage(trimmedInput, accessToken, portfolio);
       processAndSetMessages(trimmedInput, result);
     });
   }
@@ -116,6 +121,11 @@ export default function Home() {
   const handleCommandClick = (command: string) => {
       if (command.startsWith('/paper') || command.startsWith('/close')) {
           setInput(command);
+          // Focus the input field after setting the command
+          const inputElement = document.querySelector('input[aria-label="Chat input"]');
+          if (inputElement) {
+            (inputElement as HTMLInputElement).focus();
+          }
       } else {
         handleSendMessage(command);
       }
@@ -127,6 +137,10 @@ export default function Home() {
         const payload = lastAnalysisMessage.payload as BotResponsePayload & { type: 'analysis' };
         if (payload.tradeRecommendation?.tradeCommand) {
             setInput(payload.tradeRecommendation.tradeCommand);
+            const inputElement = document.querySelector('input[aria-label="Chat input"]');
+            if (inputElement) {
+                (inputElement as HTMLInputElement).focus();
+            }
         } else {
             toast({
                 title: "No Recommendation Found",
@@ -170,7 +184,7 @@ export default function Home() {
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('auth')} disabled={isPending}><KeyRound /> Auth</Button>
               <Button variant="outline" size="sm" onClick={handlePaperTrade} disabled={isPending}><Newspaper /> Paper Trade</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('/portfolio')} disabled={isPending}><Briefcase /> Portfolio</Button>
-              <Button variant="outline" size="sm" onClick={() => handleCommandClick('/close')} disabled={isPending}><XCircle /> Close</Button>
+              <Button variant="outline" size="sm" onClick={() => handleCommandClick('/close ')} disabled={isPending}><XCircle /> Close</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
           </div>
           <form onSubmit={handleSubmit} className="flex items-center gap-3">
