@@ -284,20 +284,6 @@ class MarketAnalyzer {
 export async function getBotResponse(message: string, token: string | null | undefined): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
 
-    // Check if the message is a potential auth code.
-    const isAuthCode = /^[a-z0-9\-_]+$/i.test(lowerCaseMessage) && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(':');
-
-    if (isAuthCode) {
-        try {
-            const newAccessToken = await exchangeCodeForToken(lowerCaseMessage);
-            const expiries = await UpstoxAPI.getExpiries(newAccessToken);
-            return { type: 'expiries', expiries, accessToken: newAccessToken };
-        } catch (e: any) {
-             return { type: 'error', message: `❌ Authorization error: ${e.message}` };
-        }
-    }
-
-
     if (lowerCaseMessage.startsWith('start')) {
         try {
             const expiries = await UpstoxAPI.getExpiries(token);
@@ -371,6 +357,19 @@ export async function getBotResponse(message: string, token: string | null | und
 5. Click on an expiry date to get a detailed market analysis and trading opportunities.
 `;
         return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
+    }
+
+    // Check if the message is a potential auth code.
+    const isAuthCode = /^[a-z0-9\-_]+$/i.test(lowerCaseMessage) && lowerCaseMessage.length > 3 && lowerCaseMessage.length < 50;
+
+    if (isAuthCode) {
+        try {
+            const newAccessToken = await exchangeCodeForToken(lowerCaseMessage);
+            const expiries = await UpstoxAPI.getExpiries(newAccessToken);
+            return { type: 'expiries', expiries, accessToken: newAccessToken };
+        } catch (e: any) {
+             return { type: 'error', message: `❌ Authorization error: ${e.message}` };
+        }
     }
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
