@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, Send, User, Loader } from 'lucide-react';
+import { Bot, Send, User, Loader, Rocket, HelpCircle, KeyRound } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -23,7 +23,7 @@ export default function Home() {
      const initialBotMessage: Message = {
         id: crypto.randomUUID(),
         role: 'bot',
-        content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' to begin.",
+        content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
       };
     setMessages([initialBotMessage]);
   }, []);
@@ -50,6 +50,17 @@ export default function Home() {
 
     if (response.type === 'error') {
         botMessage.content = response.message;
+        if(response.authUrl) {
+          botMessage.content = (
+            <div>
+              {response.message}
+              <a href={response.authUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                Click here to authorize.
+              </a>
+              <p className="text-xs mt-2 text-muted-foreground">After authorizing, paste the new access token in `src/lib/bot-logic.ts`.</p>
+            </div>
+          );
+        }
         botMessage.payload = undefined; // Don't render a payload for errors
     } else if (response.type === 'expiries') {
         botMessage.content = "Here are the available expiry dates for NIFTY 50.";
@@ -91,6 +102,10 @@ export default function Home() {
   const handleExpirySelect = (expiry: string) => {
       handleSendMessage(`exp:${expiry}`);
   }
+  
+  const handleCommandClick = (command: string) => {
+      handleSendMessage(command);
+  }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
@@ -113,11 +128,16 @@ export default function Home() {
           )}
         </CardContent>
         <div className="border-t p-4 bg-background/80 backdrop-blur-sm rounded-b-2xl">
+           <div className="flex gap-2 mb-3">
+              <Button variant="outline" size="sm" onClick={() => handleCommandClick('start')} disabled={isPending}><Rocket /> Start</Button>
+              <Button variant="outline" size="sm" onClick={() => handleCommandClick('auth')} disabled={isPending}><KeyRound /> Auth</Button>
+              <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
+          </div>
           <form onSubmit={handleSubmit} className="flex items-center gap-3">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type 'start' to begin..."
+              placeholder="Type your message or use the menu..."
               className="flex-1 bg-white dark:bg-slate-800"
               disabled={isPending}
               aria-label="Chat input"

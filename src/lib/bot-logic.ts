@@ -58,6 +58,7 @@ export type ExpiryPayload = z.infer<typeof ExpiryPayloadSchema>;
 const ErrorPayloadSchema = z.object({
     type: z.literal('error'),
     message: z.string(),
+    authUrl: z.string().optional(),
 });
 export type ErrorPayload = z.infer<typeof ErrorPayloadSchema>;
 
@@ -226,7 +227,7 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
     const lowerCaseMessage = message.toLowerCase().trim();
 
     // Initial greeting or help
-    if (lowerCaseMessage === 'start' || lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
+    if (lowerCaseMessage.startsWith('start') || lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
         try {
             const expiries = await UpstoxAPI.getExpiries();
             return { type: 'expiries', expiries };
@@ -268,7 +269,7 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
 
     if (lowerCaseMessage.startsWith('auth')) {
         const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=https://localhost`;
-        return { type: 'error', message: `To get a new access token, please visit: ${authUrl} \n\nAfter authorizing, you will be redirected to a page that may show an error. Copy the 'code' from the URL and use a tool like Postman or curl to get your access token. Then, paste it into the bot-logic.ts file.` };
+        return { type: 'error', message: `To get a new access token, you need to authorize this application with Upstox. `, authUrl };
     }
     
      if (lowerCaseMessage.includes('help')) {
