@@ -7,6 +7,7 @@ import { z } from 'zod';
 const config = {
     UPSTOX_API_KEY: "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: "3yn8j0huzj",
+    UPSTOX_REDIRECT_URI: "https://localhost.com", // Correct redirect URI
     // Hardcoded for demo purposes, in a real app this would be managed securely
     // TODO: PASTE YOUR NEW UPSTOX ACCESS TOKEN HERE
     UPSTOX_ACCESS_TOKEN: "YOUR_ACCESS_TOKEN_HERE",
@@ -69,6 +70,9 @@ export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload;
 // ===== API HELPERS =====
 class UpstoxAPI {
     private static getHeaders() {
+        if (config.UPSTOX_ACCESS_TOKEN === "YOUR_ACCESS_TOKEN_HERE") {
+             throw new Error("Upstox Access Token is not configured. Please use the 'auth' command.");
+        }
         return {
             "Authorization": `Bearer ${config.UPSTOX_ACCESS_TOKEN}`,
             "Accept": "application/json"
@@ -81,6 +85,9 @@ class UpstoxAPI {
         try {
             const response = await fetch(url, { headers });
             if (!response.ok) {
+                 if (response.status === 401) {
+                     throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
+                 }
                 throw new Error(`Upstox API error: ${response.statusText}`);
             }
             const data = await response.json();
@@ -92,9 +99,8 @@ class UpstoxAPI {
             return expiryDates.sort().map(expiry => {
                 const expDate = new Date(expiry);
                 const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
-
-                // Simple monthly check
-                const isMonthly = new Date(expDate.getFullYear(), expDate.getMonth() + 1, 0).getDate() - expDate.getDate() < 7;
+                const lastDayOfMonth = new Date(expDate.getFullYear(), expDate.getMonth() + 1, 0).getDate();
+                const isMonthly = (lastDayOfMonth - expDate.getDate()) < 7;
                 const label = isMonthly ? "(M)" : "(W)";
 
                 return {
@@ -102,7 +108,7 @@ class UpstoxAPI {
                     label: `${expiry} ${label} DTE: ${dte}`
                 };
             });
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error fetching expiries:", error);
             throw error;
         }
@@ -114,10 +120,13 @@ class UpstoxAPI {
         try {
             const response = await fetch(url, { headers });
             if (!response.ok) {
+                if (response.status === 401) {
+                     throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
+                }
                 throw new Error(`Upstox API error: ${response.statusText}`);
             }
             return await response.json();
-        } catch (error) {
+        } catch (error: any) {
             console.error(`Error fetching option chain for ${expiryDate}:`, error);
             throw error;
         }
@@ -226,17 +235,19 @@ class MarketAnalyzer {
 export async function getBotResponse(message: string): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
 
-    // Initial greeting or help
     if (lowerCaseMessage.startsWith('start') || lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
         try {
             const expiries = await UpstoxAPI.getExpiries();
             return { type: 'expiries', expiries };
         } catch (e: any) {
+            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
+                const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
+                return { type: 'error', message: e.message, authUrl };
+            }
             return { type: 'error', message: `Failed to fetch expiries: ${e.message}` };
         }
     }
 
-    // Handle expiry selection
     if (lowerCaseMessage.startsWith('exp:')) {
         const expiry = lowerCaseMessage.split(':')[1];
         try {
@@ -263,17 +274,40 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
             };
 
         } catch (e: any) {
+            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
+                 const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
+                return { type: 'error', message: e.message, authUrl };
+            }
             return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}` };
         }
     }
 
     if (lowerCaseMessage.startsWith('auth')) {
-        const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=https://localhost`;
-        return { type: 'error', message: `To get a new access token, you need to authorize this application with Upstox. `, authUrl };
+        const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
+        return { 
+            type: 'error', 
+            message: `To get a new access token, you need to authorize this application with Upstox. Click the link below.`, 
+            authUrl 
+        };
     }
     
      if (lowerCaseMessage.includes('help')) {
-        return { type: 'error', message: "This is a web-based version of the NIFTY options analysis bot. Here are the available commands:\n\n- `start`: Begins the analysis by showing available expiry dates.\n- `auth`: Provides instructions on how to get a new access token for the Upstox API.\n- `help`: Shows this help message.\n\nAfter starting, you can click on an expiry date to get a detailed market analysis and trading opportunities." };
+        const helpText = `**NIFTY Options Analysis Bot**
+
+**Core Commands:**
+- \`start\`: Begins the analysis by showing available expiry dates.
+- \`auth\`: Provides instructions on how to get a new access token for the Upstox API.
+- \`help\`: Shows this help message.
+
+**How to use:**
+1. Use the **Auth** button or type \`auth\` to get a link to log into Upstox.
+2. After logging in, you'll be redirected. Copy the \`code\` from the URL.
+3. Paste the code into a new file called \`upstox_code.txt\` in the project's root directory.
+4. Restart the application. It will automatically use the code to get an access token.
+5. Use the **Start** button or type \`start\` to begin your analysis.
+6. Click on an expiry date to get a detailed market analysis and trading opportunities.
+`;
+        return { type: 'error', message: helpText.replace(/`/g, '**') }; // Basic markdown conversion
     }
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };

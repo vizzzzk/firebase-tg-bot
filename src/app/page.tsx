@@ -49,17 +49,19 @@ export default function Home() {
     };
 
     if (response.type === 'error') {
-        botMessage.content = response.message;
+        // For error messages, we display them directly. If there's an auth URL, we render it as a clickable link.
         if(response.authUrl) {
-          botMessage.content = (
+           botMessage.content = (
             <div>
-              {response.message}
-              <a href={response.authUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline">
-                Click here to authorize.
+              <p>{response.message}</p>
+              <a href={response.authUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline font-semibold mt-2 inline-block">
+                Click here to authorize with Upstox
               </a>
-              <p className="text-xs mt-2 text-muted-foreground">After authorizing, paste the new access token in `src/lib/bot-logic.ts`.</p>
+              <p className="text-xs mt-2 text-muted-foreground">After authorizing, you will be redirected. Copy the `code` from the new URL's address bar and paste it into a file named `upstox_code.txt` in the root of this project. Then, restart the application.</p>
             </div>
           );
+        } else {
+           botMessage.content = response.message;
         }
         botMessage.payload = undefined; // Don't render a payload for errors
     } else if (response.type === 'expiries') {
