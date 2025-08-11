@@ -396,7 +396,7 @@ export async function getBotResponse(message: string, token: string | null | und
         };
     }
     
-     if (lowerCaseMessage.includes('help')) {
+    if (lowerCaseMessage.startsWith('help')) {
         const helpText = `**NIFTY Options Analysis Bot**
 
 **Core Commands:**
@@ -404,6 +404,8 @@ export async function getBotResponse(message: string, token: string | null | und
 - \`auth\`: Provides instructions on how to get a new access token for the Upstox API.
 - \`help\`: Shows this help message.
 - \`/paper [CE/PE] [STRIKE] [BUY/SELL] [QTY] [PRICE]\`: Executes a simulated trade.
+- \`/portfolio\`: Shows your current simulated portfolio.
+- \`/close [POSITION_#]\`: Closes an open position from your portfolio.
 
 **How to use:**
 1. Use the **Auth** button or type \`auth\` to get a link to log into Upstox.
@@ -470,9 +472,25 @@ export async function getBotResponse(message: string, token: string | null | und
         }
     }
 
+    if (command.startsWith('/portfolio')) {
+        return {
+            type: 'paper-trade',
+            message: `💼 Your Portfolio:\n• Value: Rs. 0.00\n• P&L: Rs. 0.00\n• Positions: 0 open`,
+            accessToken: token ?? undefined,
+        };
+    }
+
+    if (command.startsWith('/close')) {
+        return {
+            type: 'paper-trade',
+            message: `✅ No open positions to close.`,
+            accessToken: token ?? undefined,
+        };
+    }
+
 
     // Check if the message is a potential auth code.
-    const isAuthCode = /^[a-z0-9]+$/i.test(command) && command.length > 3 && command.length < 50;
+    const isAuthCode = /^[a-z0-9]+$/i.test(command) && command.length > 20 && command.length < 50;
 
     if (isAuthCode) {
         try {

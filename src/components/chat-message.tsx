@@ -166,7 +166,7 @@ export default function ChatMessage({ role, content, payload, onExpirySelect, on
             : 'bg-muted text-muted-foreground rounded-bl-none'
         )}
       >
-        <div>{content}</div>
+        <div className="prose-sm" style={{whiteSpace: 'pre-wrap'}}>{content}</div>
         {payload && <div className="mt-2">{renderPayload(payload, onExpirySelect, onCommandClick)}</div>}
       </div>
       {isUser && (

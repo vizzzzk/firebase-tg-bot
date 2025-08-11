@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -114,7 +114,7 @@ export default function Home() {
   }
   
   const handleCommandClick = (command: string) => {
-      if (command.startsWith('/paper')) {
+      if (command.startsWith('/paper') || command.startsWith('/close')) {
           setInput(command);
       } else {
         handleSendMessage(command);
@@ -169,6 +169,8 @@ export default function Home() {
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('start')} disabled={isPending}><Rocket /> Start</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('auth')} disabled={isPending}><KeyRound /> Auth</Button>
               <Button variant="outline" size="sm" onClick={handlePaperTrade} disabled={isPending}><Newspaper /> Paper Trade</Button>
+              <Button variant="outline" size="sm" onClick={() => handleCommandClick('/portfolio')} disabled={isPending}><Briefcase /> Portfolio</Button>
+              <Button variant="outline" size="sm" onClick={() => handleCommandClick('/close')} disabled={isPending}><XCircle /> Close</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
           </div>
           <form onSubmit={handleSubmit} className="flex items-center gap-3">
