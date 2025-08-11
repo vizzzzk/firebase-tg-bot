@@ -373,31 +373,42 @@ export async function getBotResponse(message: string, token: string | null | und
     const lowerCaseMessage = message.toLowerCase().trim();
     const command = message.trim();
 
-    // Command processing
-    if (lowerCaseMessage.startsWith('start')) {
+    // Check if the message is a potential auth code FIRST.
+    // This is a more specific check for alphanumeric strings that are typical for auth codes.
+    if (/^[a-z0-9]{30,50}$/i.test(command)) {
         try {
-            const expiries = await UpstoxAPI.getExpiries(token);
-            return { type: 'expiries', expiries, accessToken: token ?? undefined };
+            const newAccessToken = await exchangeCodeForToken(command);
+            const expiries = await UpstoxAPI.getExpiries(newAccessToken);
+            return { type: 'expiries', expiries, accessToken: newAccessToken };
         } catch (e: any) {
-            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
-                const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
-                return { type: 'error', message: e.message, authUrl };
-            }
-            return { type: 'error', message: `Failed to fetch expiries: ${e.message}` };
+             return { type: 'error', message: `❌ Authorization error: ${e.message}` };
         }
     }
 
-    if (lowerCaseMessage.startsWith('auth')) {
-        const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
-        return { 
-            type: 'error', 
-            message: `To get a new access token, you need to authorize this application with Upstox. Click the link below.`, 
-            authUrl 
-        };
-    }
-    
-    if (lowerCaseMessage.startsWith('help')) {
-        const helpText = `**NIFTY Options Analysis Bot**
+    // Then, process other commands.
+    switch (lowerCaseMessage.split(' ')[0]) {
+        case 'start':
+            try {
+                const expiries = await UpstoxAPI.getExpiries(token);
+                return { type: 'expiries', expiries, accessToken: token ?? undefined };
+            } catch (e: any) {
+                if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
+                    const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
+                    return { type: 'error', message: e.message, authUrl };
+                }
+                return { type: 'error', message: `Failed to fetch expiries: ${e.message}` };
+            }
+
+        case 'auth':
+            const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
+            return { 
+                type: 'error', 
+                message: `To get a new access token, you need to authorize this application with Upstox. Click the link below.`, 
+                authUrl 
+            };
+        
+        case 'help':
+            const helpText = `**NIFTY Options Analysis Bot**
 
 **Core Commands:**
 - \`start\`: Begins the analysis by showing available expiry dates.
@@ -415,9 +426,35 @@ export async function getBotResponse(message: string, token: string | null | und
 5. Click on an expiry date to get a detailed market analysis and trading opportunities.
 6. Use the paper trade commands from the analysis to simulate trades.
 `;
-        return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
-    }
+            return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
 
+        case '/paper':
+            const parts = command.split(' ');
+            if (parts.length === 6) {
+                const [_, type, strike, action, qty, price] = parts;
+                return {
+                    type: 'paper-trade',
+                    message: `✅ Paper trade executed: ${action.toUpperCase()} ${qty} lot(s) of ${strike} ${type.toUpperCase()} at ${price}.`,
+                    accessToken: token ?? undefined,
+                };
+            }
+             return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
+
+        case '/portfolio':
+            return {
+                type: 'paper-trade',
+                message: `💼 Your Portfolio:\n• Value: Rs. 0.00\n• P&L: Rs. 0.00\n• Positions: 0 open`,
+                accessToken: token ?? undefined,
+            };
+
+        case '/close':
+            return {
+                type: 'paper-trade',
+                message: `✅ No open positions to close.`,
+                accessToken: token ?? undefined,
+            };
+    }
+    
     if (lowerCaseMessage.startsWith('exp:')) {
         const expiry = lowerCaseMessage.split(':')[1];
         try {
@@ -460,47 +497,7 @@ export async function getBotResponse(message: string, token: string | null | und
         }
     }
     
-    if (command.startsWith('/paper')) {
-        const parts = command.split(' ');
-        if (parts.length === 6) {
-            const [_, type, strike, action, qty, price] = parts;
-            return {
-                type: 'paper-trade',
-                message: `✅ Paper trade executed: ${action.toUpperCase()} ${qty} lot(s) of ${strike} ${type.toUpperCase()} at ${price}.`,
-                accessToken: token ?? undefined,
-            };
-        }
-    }
-
-    if (command.startsWith('/portfolio')) {
-        return {
-            type: 'paper-trade',
-            message: `💼 Your Portfolio:\n• Value: Rs. 0.00\n• P&L: Rs. 0.00\n• Positions: 0 open`,
-            accessToken: token ?? undefined,
-        };
-    }
-
-    if (command.startsWith('/close')) {
-        return {
-            type: 'paper-trade',
-            message: `✅ No open positions to close.`,
-            accessToken: token ?? undefined,
-        };
-    }
-
-
-    // Check if the message is a potential auth code.
-    const isAuthCode = /^[a-z0-9]+$/i.test(command) && command.length > 20 && command.length < 50;
-
-    if (isAuthCode) {
-        try {
-            const newAccessToken = await exchangeCodeForToken(command);
-            const expiries = await UpstoxAPI.getExpiries(newAccessToken);
-            return { type: 'expiries', expiries, accessToken: newAccessToken };
-        } catch (e: any) {
-             return { type: 'error', message: `❌ Authorization error: ${e.message}` };
-        }
-    }
-
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
+
+    
