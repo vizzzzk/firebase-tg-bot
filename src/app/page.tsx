@@ -57,7 +57,7 @@ export default function Home() {
               <a href={response.authUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline font-semibold mt-2 inline-block">
                 Click here to authorize with Upstox
               </a>
-              <p className="text-xs mt-2 text-muted-foreground">After authorizing, you will be redirected. Copy the `code` from the new URL's address bar and paste it into a file named `upstox_code.txt` in the root of this project. Then, restart the application.</p>
+              <p className="text-xs mt-2 text-muted-foreground">After authorizing, you will be redirected. Copy the `code` from the new URL's address bar and paste it in the chat.</p>
             </div>
           );
         } else {

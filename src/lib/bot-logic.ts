@@ -14,6 +14,10 @@ const config = {
 
 const TOKEN_FILE_PATH = path.join(process.cwd(), 'upstox_access_token.json');
 
+// This variable will hold the token in memory for the current session.
+let currentAccessToken: string | null = null;
+
+
 // ===== API & TOKEN MANAGEMENT =====
 
 async function saveAccessToken(token: string) {
@@ -27,12 +31,21 @@ async function saveAccessToken(token: string) {
 }
 
 async function getAccessToken(): Promise<string | null> {
+    // 1. Prefer the in-memory token for this session
+    if (currentAccessToken) {
+        return currentAccessToken;
+    }
+    // 2. If not available, try to read from the file (for persistence between restarts)
     try {
         const data = await fs.readFile(TOKEN_FILE_PATH, 'utf-8');
         const { accessToken } = JSON.parse(data);
-        return accessToken;
+        if (accessToken) {
+            currentAccessToken = accessToken; // Load it into memory
+            return accessToken;
+        }
+        return null;
     } catch (error) {
-        // File might not exist, which is fine.
+        // File might not exist, which is fine on first run.
         return null;
     }
 }
@@ -67,6 +80,8 @@ async function exchangeCodeForToken(authCode: string): Promise<string | null> {
         const data = await response.json();
         const accessToken = data.access_token;
         if (accessToken) {
+            // Set the token for the current session AND save it for later
+            currentAccessToken = accessToken;
             await saveAccessToken(accessToken);
             return accessToken;
         }
@@ -152,6 +167,8 @@ class UpstoxAPI {
             const response = await fetch(url, { headers });
             if (!response.ok) {
                  if (response.status === 401) {
+                     // The token is invalid, clear it from memory so we are forced to get a new one.
+                     currentAccessToken = null;
                      throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
                  }
                 throw new Error(`Upstox API error: ${response.statusText}`);
@@ -187,6 +204,8 @@ class UpstoxAPI {
             const response = await fetch(url, { headers });
             if (!response.ok) {
                 if (response.status === 401) {
+                     // The token is invalid, clear it from memory so we are forced to get a new one.
+                     currentAccessToken = null;
                      throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
                 }
                 throw new Error(`Upstox API error: ${response.statusText}`);
