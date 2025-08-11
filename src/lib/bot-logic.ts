@@ -373,9 +373,9 @@ export async function getBotResponse(message: string, token: string | null | und
     const lowerCaseMessage = message.toLowerCase().trim();
     const command = message.trim();
 
-    // Check if the message is a potential auth code FIRST.
-    // This is a more specific check for alphanumeric strings that are typical for auth codes.
-    if (/^[a-z0-9]{30,50}$/i.test(command)) {
+    // This is the most specific check. It should be first.
+    // A typical auth code is a short alphanumeric string.
+    if (/^[a-z0-9]{6,50}$/i.test(command)) {
         try {
             const newAccessToken = await exchangeCodeForToken(command);
             const expiries = await UpstoxAPI.getExpiries(newAccessToken);
@@ -499,5 +499,3 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
-
-    
