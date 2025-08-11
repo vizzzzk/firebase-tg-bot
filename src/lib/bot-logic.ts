@@ -23,6 +23,8 @@ let currentAccessToken: string | null = null;
 async function saveAccessToken(token: string) {
     try {
         await fs.writeFile(TOKEN_FILE_PATH, JSON.stringify({ accessToken: token, timestamp: new Date().toISOString() }));
+        // CRITICAL FIX: Immediately update the in-memory token for the current lifecycle.
+        currentAccessToken = token;
     } catch (error) {
         console.error('Error saving access token:', error);
         // In a serverless environment, we might not be able to write files.
@@ -81,7 +83,6 @@ async function exchangeCodeForToken(authCode: string): Promise<string | null> {
         const accessToken = data.access_token;
         if (accessToken) {
             // Set the token for the current session AND save it for later
-            currentAccessToken = accessToken;
             await saveAccessToken(accessToken);
             return accessToken;
         }
