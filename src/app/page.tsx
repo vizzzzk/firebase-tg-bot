@@ -79,7 +79,7 @@ export default function Home() {
     setMessages(prev => [...prev, userMessage, botMessage]);
   }
   
-  const handleSendMessage = (messageText: string) => {
+  const handleSendMessage = (messageText: string, currentToken?: string | null) => {
     const trimmedInput = messageText.trim();
     if (!trimmedInput || isPending) return;
 
@@ -96,7 +96,7 @@ export default function Home() {
       // Remove the optimistic user message to avoid duplication
       setMessages(prev => prev.slice(0, prev.length-1));
 
-      const result = await sendMessage(trimmedInput, accessToken);
+      const result = await sendMessage(trimmedInput, currentToken ?? accessToken);
       processAndSetMessages(trimmedInput, result);
     });
   }

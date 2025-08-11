@@ -375,4 +375,3 @@ export async function getBotResponse(message: string, token: string | null | und
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
-
