@@ -192,7 +192,7 @@ class MarketAnalyzer {
         if (totalScore >= 15) grade = "Excellent";
         else if (totalScore >= 10) grade = "Good";
         else if (totalScore >= 5) grade = "Fair";
-        return { score: Math.round(totalScore, 1), grade };
+        return { score: parseFloat(totalScore.toFixed(1)), grade };
     }
 
     static analyzePcr(optionData: any, expiryDate: string): MarketAnalysis {
@@ -284,11 +284,12 @@ class MarketAnalyzer {
 export async function getBotResponse(message: string, token: string | null | undefined): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
 
-    // Handle Auth Code submission
-    if (lowerCaseMessage.length > 4 && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(' ')) {
+    // Check if the message is a potential auth code.
+    const isAuthCode = lowerCaseMessage.length > 4 && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(' ');
+
+    if (isAuthCode) {
         try {
-            const newAccessToken = await exchangeCodeForToken(message);
-            // Immediately fetch expiries with the new token
+            const newAccessToken = await exchangeCodeForToken(lowerCaseMessage);
             const expiries = await UpstoxAPI.getExpiries(newAccessToken);
             return { type: 'expiries', expiries, accessToken: newAccessToken };
         } catch (e: any) {
@@ -364,7 +365,7 @@ export async function getBotResponse(message: string, token: string | null | und
 
 **How to use:**
 1. Use the **Auth** button or type \`auth\` to get a link to log into Upstox.
-2. After logging in, you'll be redirected. Copy the \`code\` from the URL in the address bar.
+2. After logging in, you'll be redirected. Copy the \`code\` from the new URL's address bar.
 3. Paste the code directly into the chat here.
 4. The bot will automatically get an access token and show you the available expiries.
 5. Click on an expiry date to get a detailed market analysis and trading opportunities.
@@ -374,3 +375,4 @@ export async function getBotResponse(message: string, token: string | null | und
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
+
