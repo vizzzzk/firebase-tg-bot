@@ -15,7 +15,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [portfolio, setPortfolio] = useState<Portfolio>({ positions: [] });
+  const [portfolio, setPortfolio] = useState<Portfolio>({ positions: [], initialFunds: 400000, realizedPnL: 0 });
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -184,7 +184,7 @@ export default function Home() {
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('auth')} disabled={isPending}><KeyRound /> Auth</Button>
               <Button variant="outline" size="sm" onClick={handlePaperTrade} disabled={isPending}><Newspaper /> Paper Trade</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('/portfolio')} disabled={isPending}><Briefcase /> Portfolio</Button>
-              <Button variant="outline" size="sm" onClick={() => handleCommandClick('/close ')} disabled={isPending}><XCircle /> Close</Button>
+              <Button variant="outline" size="sm" onClick={() => setInput('/close ')} disabled={isPending}><XCircle /> Close</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
           </div>
           <form onSubmit={handleSubmit} className="flex items-center gap-3">
