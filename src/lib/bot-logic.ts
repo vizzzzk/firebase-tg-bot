@@ -1,4 +1,5 @@
 
+
 'use server';
 
 import { z } from 'zod';
@@ -152,7 +153,7 @@ const ExpiryPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('expiries'),
     expiries: z.array(ExpirySchema),
 });
-export type ExpiryPayload = z.infer<ExpiryPayloadSchema>;
+export type ExpiryPayload = z.infer<typeof ExpiryPayloadSchema>;
 
 const ErrorPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('error'),
@@ -436,10 +437,10 @@ export async function getBotResponse(message: string, token: string | null | und
     const parts = command.split(' ');
     const mainCommand = parts[0].toLowerCase();
     
-    // Command whitelist for pre-auth code check
-    const isStandardCommand = ['start', 'auth', 'help', '/paper', '/portfolio', '/close'].includes(mainCommand) || mainCommand.startsWith('exp:');
+    // Stricter check for auth code: letters and numbers, length 6-50.
+    const isAuthCode = /^[a-zA-Z0-9]{6,50}$/.test(command) && !['start', 'auth', 'help', '/portfolio', '/close'].includes(command) && !command.startsWith('exp:');
 
-    if (!isStandardCommand && /^[a-zA-Z0-9]{6,50}$/.test(command)) {
+    if (isAuthCode) {
         try {
             const newAccessToken = await exchangeCodeForToken(command);
             const expiries = await UpstoxAPI.getExpiries(newAccessToken);
@@ -504,11 +505,11 @@ export async function getBotResponse(message: string, token: string | null | und
                 const instrumentKey = await findInstrumentKey(token, portfolio.lastActiveExpiry, parseFloat(strike), type.toUpperCase() as 'CE' | 'PE');
 
                 if (!instrumentKey) {
-                    return { type: 'error', message: `Could not find instrument key for ${type} ${strike}. Cannot place trade.`, portfolio };
+                    return { type: 'error', message: `Could not find instrument key for ${type.toUpperCase()} ${strike}. Cannot place trade.`, portfolio };
                 }
                 
                 const newPosition: Position = {
-                    id: portfolio.positions.length > 1 ? Math.max(...portfolio.positions.map(p => p.id)) + 1 : 1,
+                    id: portfolio.positions.length > 0 ? Math.max(...portfolio.positions.map(p => p.id)) + 1 : 1,
                     type: type.toUpperCase() as 'CE' | 'PE',
                     strike: parseFloat(strike),
                     action: action.toUpperCase() as 'BUY' | 'SELL',
