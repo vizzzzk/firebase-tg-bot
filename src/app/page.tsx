@@ -77,18 +77,17 @@ export default function Home() {
     const trimmedInput = messageText.trim();
     if (!trimmedInput || isPending) return;
 
-    // Add user message optimistically, but we'll re-add it in processAndSetMessages
-    // to keep the order correct. This just clears the input field.
     const tempUserMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
       content: trimmedInput,
     };
+    // Add user message optimistically to the chat
     setMessages(prev => [...prev, tempUserMessage]);
     setInput('');
     
     startTransition(async () => {
-      // Remove the temp message
+      // Remove the optimistic user message to avoid duplication
       setMessages(prev => prev.slice(0, prev.length-1));
 
       const result = await sendMessage(trimmedInput);
