@@ -140,8 +140,13 @@ const ErrorPayloadSchema = BasePayloadSchema.extend({
 });
 export type ErrorPayload = z.infer<ErrorPayloadSchema>;
 
+const PaperTradePayloadSchema = BasePayloadSchema.extend({
+    type: z.literal('paper-trade'),
+    message: z.string(),
+});
+export type PaperTradePayload = z.infer<typeof PaperTradePayloadSchema>;
 
-export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload;
+export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload | PaperTradePayload;
 
 
 // ===== API HELPERS =====
@@ -366,6 +371,7 @@ class MarketAnalyzer {
  */
 export async function getBotResponse(message: string, token: string | null | undefined): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
+    const command = message.trim();
 
     // Command processing
     if (lowerCaseMessage.startsWith('start')) {
@@ -397,6 +403,7 @@ export async function getBotResponse(message: string, token: string | null | und
 - \`start\`: Begins the analysis by showing available expiry dates.
 - \`auth\`: Provides instructions on how to get a new access token for the Upstox API.
 - \`help\`: Shows this help message.
+- \`/paper [CE/PE] [STRIKE] [BUY/SELL] [QTY] [PRICE]\`: Executes a simulated trade.
 
 **How to use:**
 1. Use the **Auth** button or type \`auth\` to get a link to log into Upstox.
@@ -404,6 +411,7 @@ export async function getBotResponse(message: string, token: string | null | und
 3. Paste the code directly into the chat here.
 4. The bot will automatically get an access token and show you the available expiries.
 5. Click on an expiry date to get a detailed market analysis and trading opportunities.
+6. Use the paper trade commands from the analysis to simulate trades.
 `;
         return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
     }
@@ -449,14 +457,26 @@ export async function getBotResponse(message: string, token: string | null | und
             return { type: 'error', message: `Failed to analyze expiry ${expiry}: ${e.message}` };
         }
     }
+    
+    if (command.startsWith('/paper')) {
+        const parts = command.split(' ');
+        if (parts.length === 6) {
+            const [_, type, strike, action, qty, price] = parts;
+            return {
+                type: 'paper-trade',
+                message: `✅ Paper trade executed: ${action.toUpperCase()} ${qty} lot(s) of ${strike} ${type.toUpperCase()} at ${price}.`,
+                accessToken: token ?? undefined,
+            };
+        }
+    }
 
 
     // Check if the message is a potential auth code.
-    const isAuthCode = /^[a-z0-9]+$/i.test(lowerCaseMessage) && lowerCaseMessage.length > 3 && lowerCaseMessage.length < 50;
+    const isAuthCode = /^[a-z0-9]+$/i.test(command) && command.length > 3 && command.length < 50;
 
     if (isAuthCode) {
         try {
-            const newAccessToken = await exchangeCodeForToken(lowerCaseMessage);
+            const newAccessToken = await exchangeCodeForToken(command);
             const expiries = await UpstoxAPI.getExpiries(newAccessToken);
             return { type: 'expiries', expiries, accessToken: newAccessToken };
         } catch (e: any) {

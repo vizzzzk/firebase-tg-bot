@@ -74,6 +74,9 @@ export default function Home() {
         botMessage.content = "Here are the available expiry dates for NIFTY 50.";
     } else if (response.type === 'analysis') {
         botMessage.content = `Analysis for expiry ${response.opportunities[0]?.strike ? `around strike ${response.opportunities[0].strike}` : ''}:`;
+    } else if (response.type === 'paper-trade') {
+        botMessage.content = response.message;
+        botMessage.payload = undefined;
     }
 
     setMessages(prev => [...prev, userMessage, botMessage]);
@@ -111,7 +114,11 @@ export default function Home() {
   }
   
   const handleCommandClick = (command: string) => {
-      handleSendMessage(command);
+      if (command.startsWith('/paper')) {
+          setInput(command);
+      } else {
+        handleSendMessage(command);
+      }
   }
   
   const handlePaperTrade = () => {
@@ -151,10 +158,10 @@ export default function Home() {
         </CardHeader>
         <CardContent ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6">
           {messages.map((msg) => (
-            <ChatMessage key={msg.id} {...msg} onExpirySelect={handleExpirySelect} />
+            <ChatMessage key={msg.id} {...msg} onExpirySelect={handleExpirySelect} onCommandClick={handleCommandClick} />
           ))}
           {isPending && (
-             <ChatMessage id="thinking" role="bot" content={<div className="flex items-center gap-2"><Loader className="w-4 h-4 animate-spin" /> Thinking...</div>} onExpirySelect={() => {}} />
+             <ChatMessage id="thinking" role="bot" content={<div className="flex items-center gap-2"><Loader className="w-4 h-4 animate-spin" /> Thinking...</div>} onExpirySelect={() => {}} onCommandClick={() => {}} />
           )}
         </CardContent>
         <div className="border-t p-4 bg-background/80 backdrop-blur-sm rounded-b-2xl">
