@@ -4,4 +4,13 @@
 runConfig:
   # Increase this value if you'd like to automatically spin up
   # more instances in response to increased traffic.
-  maxInstances: 1
+  maxInstances: 2
+  # Set a minimum number of instances to run. This ensures your app is always
+  # available, even during periods of low traffic.
+  minInstances: 1
+
+# Secrets are variables that are not checked into source control. You can specify
+# them on the command line or using a .secret.local file.
+secretEnvironmentVariables:
+  - secret: UPSTOX_API_KEY
+  - secret: UPSTOX_API_SECRET
