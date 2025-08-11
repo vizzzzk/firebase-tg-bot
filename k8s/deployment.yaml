@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webot-app-deployment
+  labels:
+    app: webot-app
+spec:
+  replicas: 1  # Number of pod replicas; adjust as needed for scalability
+  selector:
+    matchLabels:
+      app: webot-app
+  template:
+    metadata:
+      labels:
+        app: webot-app
+    spec:
+      containers:
+        - name: webot-app
+          image: your-username/webot-app:latest  # Replace with your actual image
+          ports:
+            - containerPort: 3000  # The port your Next.js app listens on
+          resources:  # Optional: Define CPU/memory limits for better resource management
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:  # Optional: Checks if the app is ready to receive traffic
+            httpGet:
+              path: /  # Adjust if your health check endpoint is different
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:  # Optional: Checks if the app is alive; restarts if failed
+            httpGet:
+              path: /  # Adjust if your health check endpoint is different
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10

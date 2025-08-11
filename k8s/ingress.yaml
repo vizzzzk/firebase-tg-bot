@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webot-app-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"  # Adjust based on your Ingress controller (e.g., "gce" for GKE)
+    # Optional: Add annotations for cert-manager if using auto-TLS
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  rules:
+    - host: your-domain.com  # Replace with your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: webot-app-service
+                port:
+                  number: 80  # Matches the Service's port
+  # Optional: TLS configuration for HTTPS
+  # tls:
+  #   - hosts:
+  #       - your-domain.com
+  #     secretName: webot-app-tls-secret  # Secret containing the TLS cert
