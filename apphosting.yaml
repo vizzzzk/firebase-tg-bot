@@ -4,7 +4,7 @@
 runConfig:
   # Increase this value if you'd like to automatically spin up
   # more instances in response to increased traffic.
-  maxInstances: 2
+  maxInstances: 10
   # Set a minimum number of instances to run. This ensures your app is always
   # available, even during periods of low traffic.
   minInstances: 1
