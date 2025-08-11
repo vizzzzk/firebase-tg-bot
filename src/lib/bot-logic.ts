@@ -23,7 +23,8 @@ const PositionSchema = z.object({
     entryPrice: z.number(),
     expiry: z.string(),
     entryTimestamp: z.string(),
-    instrumentKey: z.string(), // Added for fetching LTP
+    instrumentKey: z.string(),
+    marginBlocked: z.number(),
 });
 export type Position = z.infer<typeof PositionSchema>;
 
@@ -31,9 +32,11 @@ const PortfolioSchema = z.object({
   positions: z.array(PositionSchema),
   initialFunds: z.number(),
   realizedPnL: z.number(),
+  blockedMargin: z.number(),
   lastActiveExpiry: z.string().optional(),
 });
 export type Portfolio = z.infer<typeof PortfolioSchema>;
+
 
 // ===== API & TOKEN MANAGEMENT =====
 async function exchangeCodeForToken(authCode: string): Promise<string> {
@@ -166,7 +169,7 @@ const PaperTradePayloadSchema = BasePayloadSchema.extend({
     type: z.literal('paper-trade'),
     message: z.string(),
 });
-export type PaperTradePayload = z.infer<typeof PaperTradePayloadSchema>;
+export type PaperTradePayload = z.infer<PaperTradePayloadSchema>;
 
 const PortfolioPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('portfolio'),
@@ -251,11 +254,17 @@ class UpstoxAPI {
     }
 
     static async getLTP(accessToken: string | null | undefined, expiryDate: string, strike: number, optionType: 'CE' | 'PE'): Promise<number> {
+        console.log(`Fetching LTP for ${optionType} ${strike} @ ${expiryDate}`);
         try {
             const optionChain = await this.getOptionChain(accessToken, expiryDate);
-            const targetStrike = parseFloat(strike.toString());
+            if (!optionChain || !optionChain.data) {
+                console.error("Failed to fetch or parse option chain.");
+                return 0;
+            }
 
+            const targetStrike = parseFloat(strike.toString());
             const strikeData = optionChain.data.find((d: any) => d.strike_price === targetStrike);
+
             if (!strikeData) {
                 console.error(`Strike ${targetStrike} not found in option chain for ${expiryDate}`);
                 return 0;
@@ -267,13 +276,16 @@ class UpstoxAPI {
                 return 0;
             }
 
-            return optionDetails.market_data.last_price ?? 0;
+            const ltp = optionDetails.market_data.last_price;
+            console.log(`Found LTP: ${ltp}`);
+            return ltp ?? 0;
         } catch (error: any) {
-            console.error(`Error fetching LTP for ${optionType} ${strike} @ ${expiryDate}:`, error);
-            throw error; // Re-throw to be caught by the caller
+            console.error(`Error in getLTP for ${optionType} ${strike} @ ${expiryDate}:`, error);
+            throw error;
         }
     }
 }
+
 
 // ===== ANALYSIS LOGIC =====
 class MarketAnalyzer {
@@ -360,14 +372,14 @@ class MarketAnalyzer {
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                 const iv = (ceData.option_greeks?.iv ?? 0) / 100;
+                 const iv = (ceData.option_greeks?.iv ?? 0); // Keep as is
                  const pop = (1 - Math.abs(delta)) * 100;
 
                  const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop, instrumentKey: ceData.instrument_key };
                  
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min(iv * 100 / 3, 10).toFixed(1));
+                    const ivScore = parseFloat(Math.min(iv / 3, 10).toFixed(1));
                     const alignmentBonus = 'CE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     
@@ -382,14 +394,14 @@ class MarketAnalyzer {
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                 const iv = (peData.option_greeks?.iv ?? 0) / 100;
+                 const iv = (peData.option_greeks?.iv ?? 0); // Keep as is
                  const pop = (1-Math.abs(delta)) * 100;
                  
                  const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop, instrumentKey: peData.instrument_key };
 
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min(iv * 100 / 3, 10).toFixed(1));
+                    const ivScore = parseFloat(Math.min(iv / 3, 10).toFixed(1));
                     const alignmentBonus = 'PE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     const score_breakdown = { deltaScore, ivScore, liquidityScore: liquidity.score, alignmentBonus };
@@ -421,16 +433,27 @@ class MarketAnalyzer {
 
 
 // A helper to find the corresponding instrument key from the analysis data
-async function findInstrumentKey(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<string | undefined> {
+async function findInstrumentAndSpot(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string, spotPrice?: number}> {
     const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
-    const strikeData = optionChain.data.find((d: any) => d.strike_price === strike);
-    if (type === 'CE') {
-        return strikeData?.call_options?.instrument_key;
-    } else {
-        return strikeData?.put_options?.instrument_key;
+    if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
+        return { instrumentKey: undefined, spotPrice: undefined };
     }
+    const spotPrice = optionChain.data[0]?.underlying_spot_price;
+    const strikeData = optionChain.data.find((d: any) => d.strike_price === strike);
+    let instrumentKey;
+    if (type === 'CE') {
+        instrumentKey = strikeData?.call_options?.instrument_key;
+    } else {
+        instrumentKey = strikeData?.put_options?.instrument_key;
+    }
+    return { instrumentKey, spotPrice };
 }
 
+function calculateMargin(spotPrice: number, premium: number): number {
+    // This is an approximation. Real margin calculation is more complex.
+    const margin = (spotPrice * config.NIFTY_LOT_SIZE * 0.10) + premium;
+    return parseFloat(margin.toFixed(2));
+}
 
 /**
  * Main logic function to get bot response.
@@ -442,8 +465,11 @@ export async function getBotResponse(message: string, token: string | null | und
     const parts = command.split(' ');
     const mainCommand = parts[0].toLowerCase();
     
-    // Stricter check for auth code: letters and numbers, length 6-50.
-    const isAuthCode = /^[a-zA-Z0-9]{6,50}$/.test(command) && !['start', 'auth', 'help', '/portfolio', '/close'].includes(command) && !command.startsWith('exp:');
+    // Command whitelist
+    const allowedCommands = ['start', 'auth', 'help', '/portfolio', '/close'];
+    const isCommand = allowedCommands.includes(mainCommand) || mainCommand.startsWith('exp:') || mainCommand.startsWith('/paper') || mainCommand.startsWith('/close');
+    const isAuthCode = /^[a-zA-Z0-9]{6,50}$/.test(command) && !isCommand;
+
 
     if (isAuthCode) {
         try {
@@ -501,33 +527,47 @@ export async function getBotResponse(message: string, token: string | null | und
             
         case '/paper':
             if (parts.length === 6) {
-                const [_, type, strike, action, qty, price] = parts;
-                
+                const [_, type, strikeStr, action, qtyStr, priceStr] = parts;
+                const strike = parseFloat(strikeStr);
+                const quantity = parseInt(qtyStr);
+                const price = parseFloat(priceStr);
+
                 if (!portfolio.lastActiveExpiry) {
                    return { type: 'error', message: `Please run an analysis for an expiry date first before placing a trade.`, portfolio };
                 }
                 
-                const instrumentKey = await findInstrumentKey(token, portfolio.lastActiveExpiry, parseFloat(strike), type.toUpperCase() as 'CE' | 'PE');
+                const { instrumentKey, spotPrice } = await findInstrumentAndSpot(token, portfolio.lastActiveExpiry, strike, type.toUpperCase() as 'CE' | 'PE');
 
-                if (!instrumentKey) {
-                    return { type: 'error', message: `Could not find instrument key for ${type.toUpperCase()} ${strike}. Cannot place trade.`, portfolio };
+                if (!instrumentKey || !spotPrice) {
+                    return { type: 'error', message: `Could not find instrument key or spot price for ${type.toUpperCase()} ${strike}. Cannot place trade.`, portfolio };
                 }
                 
+                const premium = price * quantity * config.NIFTY_LOT_SIZE;
+                const marginRequired = calculateMargin(spotPrice, premium);
+                const availableFunds = portfolio.initialFunds + portfolio.realizedPnL - portfolio.blockedMargin;
+                
+                if (marginRequired > availableFunds) {
+                     return { type: 'error', message: `Insufficient funds. Margin required: Rs. ${marginRequired.toLocaleString()}. Available funds: Rs. ${availableFunds.toLocaleString()}.`, portfolio };
+                }
+
                 const newPosition: Position = {
                     id: portfolio.positions.length > 0 ? Math.max(...portfolio.positions.map(p => p.id)) + 1 : 1,
                     type: type.toUpperCase() as 'CE' | 'PE',
-                    strike: parseFloat(strike),
+                    strike: strike,
                     action: action.toUpperCase() as 'BUY' | 'SELL',
-                    quantity: parseInt(qty),
-                    entryPrice: parseFloat(price),
+                    quantity: quantity,
+                    entryPrice: price,
                     expiry: portfolio.lastActiveExpiry,
                     entryTimestamp: new Date().toISOString(),
                     instrumentKey,
+                    marginBlocked: marginRequired,
                 };
 
-                const updatedPortfolio = { ...portfolio, positions: [...portfolio.positions, newPosition] };
-                const premium = newPosition.entryPrice * newPosition.quantity * config.NIFTY_LOT_SIZE;
-                const portfolioValue = portfolio.initialFunds + portfolio.realizedPnL;
+                const updatedPortfolio = { 
+                    ...portfolio, 
+                    positions: [...portfolio.positions, newPosition],
+                    blockedMargin: portfolio.blockedMargin + marginRequired,
+                };
 
                 const message = `**🔒 Professional Paper Trade Executed**
 
@@ -537,7 +577,9 @@ export async function getBotResponse(message: string, token: string | null | und
 - **Entry Price:** Rs. ${newPosition.entryPrice.toFixed(2)}
 - **Expiry:** ${newPosition.expiry}
 - **Premium:** Rs. ${premium.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- **Portfolio:** Rs. ${portfolioValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+- **Est. Margin Blocked:** Rs. ${marginRequired.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Available Funds:** Rs. ${(availableFunds - marginRequired).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 
                 return {
                     type: 'paper-trade',
@@ -549,30 +591,27 @@ export async function getBotResponse(message: string, token: string | null | und
             return { type: 'error', message: "Invalid /paper command format. Expected: /paper [CE/PE] [STRIKE] [BUY/SELL] [QTY] [PRICE]", portfolio };
 
         case '/portfolio':
-            const portfolioValue = portfolio.initialFunds + portfolio.realizedPnL;
-            if (portfolio.positions.length === 0) {
-                 return {
-                    type: 'portfolio',
-                    message: `**🔒 Professional Paper Portfolio**
-- **Portfolio Value:** Rs. ${portfolioValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- **Total Realized P&L:** Rs. ${portfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- **Open Positions:** 0`,
-                    accessToken: token ?? undefined,
-                    portfolio,
-                };
-            }
+            const totalFunds = portfolio.initialFunds + portfolio.realizedPnL;
+            const availableFundsPortfolio = totalFunds - portfolio.blockedMargin;
 
             let portfolioMessage = `**🔒 Professional Paper Portfolio**\n\n`;
-            portfolioMessage += `- **Portfolio Value:** Rs. ${portfolioValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
-            portfolioMessage += `- **Total Realized P&L:** Rs. ${portfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n`;
+            portfolioMessage += `- **Total Funds:** Rs. ${totalFunds.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+            portfolioMessage += `- **Blocked Margin:** Rs. ${portfolio.blockedMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+            portfolioMessage += `- **Available Funds:** Rs. ${availableFundsPortfolio.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+            portfolioMessage += `- **Realized P&L:** Rs. ${portfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n`;
             
-            portfolio.positions.forEach(pos => {
-                portfolioMessage += `**Position #${pos.id}** (${pos.action} ${pos.quantity} lot)\n`;
-                portfolioMessage += `- **Option:** ${pos.type} ${pos.strike.toFixed(1)}\n`;
-                portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **Expiry:** ${pos.expiry}\n`;
-                portfolioMessage += `*To close, type: /close ${pos.id}*\n\n`;
-            });
-            
+            if (portfolio.positions.length === 0) {
+                 portfolioMessage += `- **Open Positions:** 0`;
+            } else {
+                 portfolio.positions.forEach(pos => {
+                    portfolioMessage += `**Position #${pos.id}** (${pos.action} ${pos.quantity} lot)\n`;
+                    portfolioMessage += `- **Option:** ${pos.type} ${pos.strike.toFixed(1)}\n`;
+                    portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **Expiry:** ${pos.expiry}\n`;
+                    portfolioMessage += `- **Margin:** Rs. ${pos.marginBlocked.toLocaleString('en-IN')}\n`;
+                    portfolioMessage += `*To close, type: /close ${pos.id}*\n\n`;
+                });
+            }
+
             return {
                 type: 'portfolio',
                 message: portfolioMessage,
@@ -605,7 +644,12 @@ export async function getBotResponse(message: string, token: string | null | und
                 const pnl = (positionToClose.entryPrice - exitPrice) * positionToClose.quantity * config.NIFTY_LOT_SIZE * (positionToClose.action === 'SELL' ? 1 : -1);
 
                 const updatedPositions = portfolio.positions.filter(p => p.id !== positionIdToClose);
-                const updatedPortfolio = { ...portfolio, positions: updatedPositions, realizedPnL: portfolio.realizedPnL + pnl };
+                const updatedPortfolio = { 
+                    ...portfolio, 
+                    positions: updatedPositions, 
+                    realizedPnL: portfolio.realizedPnL + pnl,
+                    blockedMargin: portfolio.blockedMargin - positionToClose.marginBlocked,
+                };
 
                 const closeMessage = `**🔒 Position Closed Successfully**
 - **Trade ID:** ${positionToClose.id}
@@ -615,8 +659,8 @@ export async function getBotResponse(message: string, token: string | null | und
 - **Exit:** Rs. ${exitPrice.toFixed(2)} (Current LTP)
 - **P&L:** Rs. ${pnl.toFixed(2)} ${pnl >= 0 ? '✅ Profit' : '⚠️ Loss'}
 
-- **Portfolio:** Rs. ${(updatedPortfolio.initialFunds + updatedPortfolio.realizedPnL).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- **Total P&L:** Rs. ${updatedPortfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+- **Total Funds:** Rs. ${(updatedPortfolio.initialFunds + updatedPortfolio.realizedPnL).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Realized P&L:** Rs. ${updatedPortfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                 
                 return {
                     type: 'close-position',

@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
@@ -15,7 +16,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [portfolio, setPortfolio] = useState<Portfolio>({ positions: [], initialFunds: 400000, realizedPnL: 0 });
+  const [portfolio, setPortfolio] = useState<Portfolio>({ positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0 });
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const chatContainerRef = useRef<HTMLDivElement>(null);
