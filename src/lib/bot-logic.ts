@@ -94,6 +94,12 @@ const OpportunitySchema = OptionDataSchema.extend({
 });
 export type Opportunity = z.infer<typeof OpportunitySchema>;
 
+const TradeRecommendationSchema = z.object({
+    reason: z.string(),
+    tradeCommand: z.string(),
+});
+export type TradeRecommendation = z.infer<typeof TradeRecommendationSchema>;
+
 const BasePayloadSchema = z.object({
     accessToken: z.string().optional(),
 });
@@ -110,7 +116,8 @@ const AnalysisPayloadSchema = BasePayloadSchema.extend({
     qualifiedStrikes: z.object({
         ce: z.array(OptionDataSchema.extend({type: z.literal("CE")})),
         pe: z.array(OptionDataSchema.extend({type: z.literal("PE")})),
-    })
+    }),
+    tradeRecommendation: TradeRecommendationSchema.optional(),
 });
 export type AnalysisPayload = z.infer<typeof AnalysisPayloadSchema>;
 
@@ -250,6 +257,37 @@ class MarketAnalyzer {
 
         return { sentiment, recommendation, confidence, pcr_oi, pcr_volume, interpretation, tradingBias };
     }
+    
+    static generateTradeRecommendation(ceOpp: Opportunity | undefined, peOpp: Opportunity | undefined): TradeRecommendation | undefined {
+        if (!ceOpp && !peOpp) {
+            return undefined;
+        }
+
+        let bestOpp: Opportunity;
+        let reason: string;
+
+        if (ceOpp && peOpp) {
+            if (ceOpp.total_score > peOpp.total_score) {
+                bestOpp = ceOpp;
+                reason = `The CE trade has a higher total score (${ceOpp.total_score.toFixed(1)} vs ${peOpp.total_score.toFixed(1)}), suggesting it's the better opportunity based on current market data.`;
+            } else {
+                bestOpp = peOpp;
+                reason = `The PE trade has a higher total score (${peOpp.total_score.toFixed(1)} vs ${ceOpp.total_score.toFixed(1)}), suggesting it's the better opportunity based on current market data.`;
+            }
+        } else if (ceOpp) {
+            bestOpp = ceOpp;
+            reason = "Only a qualified CE opportunity was found. This is the recommended trade by default.";
+        } else if (peOpp) {
+            bestOpp = peOpp;
+            reason = "Only a qualified PE opportunity was found. This is the recommended trade by default.";
+        } else {
+            return undefined; // Should not happen given the initial check
+        }
+
+        const tradeCommand = `/paper ${bestOpp.type} ${bestOpp.strike} SELL 1 ${bestOpp.ltp.toFixed(2)}`;
+
+        return { reason, tradeCommand };
+    }
 
     static findOpportunities(optionChain: any[], spotPrice: number, dte: number, marketAnalysis: MarketAnalysis) {
         const allOptions: (Opportunity | (OptionData & {type: 'CE' | 'PE'}))[] = [];
@@ -305,16 +343,18 @@ class MarketAnalyzer {
         opportunities.sort((a, b) => b.total_score - a.total_score);
 
         const qualifiedStrikes = {
-            ce: allOptions.filter(o => o.type === 'CE' && Math.abs(o.delta) >= 0.15 && Math.abs(o.delta) <= 0.25) as (OptionData & {type: 'CE'})[],
-            pe: allOptions.filter(o => o.type === 'PE' && Math.abs(o.delta) >= 0.15 && Math.abs(o.delta) <= 0.25) as (OptionData & {type: 'PE'})[],
+            ce: allOptions.filter(o => o.type === 'CE' && Math.abs(o.delta) >= 0.15 && Math.abs(o.delta) <= 0.25).sort((a,b) => a.strike - b.strike) as (OptionData & {type: 'CE'})[],
+            pe: allOptions.filter(o => o.type === 'PE' && Math.abs(o.delta) >= 0.15 && Math.abs(o.delta) <= 0.25).sort((a,b) => a.strike - b.strike) as (OptionData & {type: 'PE'})[],
         }
         
         const top_ce = opportunities.find(o => o.type === 'CE');
         const top_pe = opportunities.find(o => o.type === 'PE');
 
         const topOpportunities = [top_ce, top_pe].filter(Boolean) as Opportunity[];
+        
+        const tradeRecommendation = this.generateTradeRecommendation(top_ce, top_pe);
 
-        return { topOpportunities, qualifiedStrikes };
+        return { topOpportunities, qualifiedStrikes, tradeRecommendation };
     }
 }
 
@@ -383,7 +423,7 @@ export async function getBotResponse(message: string, token: string | null | und
             const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
             
             const marketAnalysis = MarketAnalyzer.analyzePcr(optionChain, expiry);
-            const { topOpportunities, qualifiedStrikes } = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis);
+            const { topOpportunities, qualifiedStrikes, tradeRecommendation } = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis);
             
             const timestamp = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
 
@@ -397,6 +437,7 @@ export async function getBotResponse(message: string, token: string | null | und
                 marketAnalysis,
                 opportunities: topOpportunities,
                 qualifiedStrikes,
+                tradeRecommendation,
                 accessToken: token ?? undefined
             };
 
@@ -411,7 +452,7 @@ export async function getBotResponse(message: string, token: string | null | und
 
 
     // Check if the message is a potential auth code.
-    const isAuthCode = /^[a-z0-9]+$/i.test(lowerCaseMessage) && !lowerCaseMessage.startsWith('exp:') && lowerCaseMessage.length > 3 && lowerCaseMessage.length < 50;
+    const isAuthCode = /^[a-z0-9]+$/i.test(lowerCaseMessage) && lowerCaseMessage.length > 3 && lowerCaseMessage.length < 50;
 
     if (isAuthCode) {
         try {

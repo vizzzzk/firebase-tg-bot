@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, Send, User, Loader, Rocket, HelpCircle, KeyRound } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -79,7 +79,7 @@ export default function Home() {
     setMessages(prev => [...prev, userMessage, botMessage]);
   }
   
-  const handleSendMessage = (messageText: string, currentToken?: string | null) => {
+  const handleSendMessage = (messageText: string) => {
     const trimmedInput = messageText.trim();
     if (!trimmedInput || isPending) return;
 
@@ -96,7 +96,7 @@ export default function Home() {
       // Remove the optimistic user message to avoid duplication
       setMessages(prev => prev.slice(0, prev.length-1));
 
-      const result = await sendMessage(trimmedInput, currentToken ?? accessToken);
+      const result = await sendMessage(trimmedInput, accessToken);
       processAndSetMessages(trimmedInput, result);
     });
   }
@@ -113,6 +113,29 @@ export default function Home() {
   const handleCommandClick = (command: string) => {
       handleSendMessage(command);
   }
+  
+  const handlePaperTrade = () => {
+      const lastAnalysisMessage = messages.slice().reverse().find(msg => msg.payload?.type === 'analysis');
+      if (lastAnalysisMessage) {
+        const payload = lastAnalysisMessage.payload as BotResponsePayload & { type: 'analysis' };
+        if (payload.tradeRecommendation?.tradeCommand) {
+            setInput(payload.tradeRecommendation.tradeCommand);
+        } else {
+            toast({
+                title: "No Recommendation Found",
+                description: "Run an analysis to get a trade recommendation first.",
+                variant: "destructive"
+            })
+        }
+      } else {
+          toast({
+                title: "No Analysis Found",
+                description: "Run an analysis to get a trade recommendation first.",
+                variant: "destructive"
+            })
+      }
+  }
+
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
@@ -135,9 +158,10 @@ export default function Home() {
           )}
         </CardContent>
         <div className="border-t p-4 bg-background/80 backdrop-blur-sm rounded-b-2xl">
-           <div className="flex gap-2 mb-3">
+           <div className="flex gap-2 mb-3 flex-wrap">
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('start')} disabled={isPending}><Rocket /> Start</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('auth')} disabled={isPending}><KeyRound /> Auth</Button>
+              <Button variant="outline" size="sm" onClick={handlePaperTrade} disabled={isPending}><Newspaper /> Paper Trade</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
           </div>
           <form onSubmit={handleSubmit} className="flex items-center gap-3">

@@ -1,5 +1,5 @@
 
-import { Bot, User, Lock, BarChart, FileText } from 'lucide-react';
+import { Bot, User, Lock, BarChart, FileText, Target, Award } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from './ui/button';
@@ -43,9 +43,9 @@ const renderPayload = (payload: any, onExpirySelect: (expiry: string) => void) =
 const AnalysisCard = ({ analysis }: { analysis: AnalysisPayload }) => (
     <Card className="bg-card/50 mt-4 text-card-foreground border-primary/20">
         <CardHeader className="pb-2">
-            <div className='flex justify-between items-center'>
+            <div className='flex justify-between items-start'>
                 <CardTitle className="text-lg font-bold flex items-center gap-2"><Lock size={16}/> Professional NIFTY Analysis</CardTitle>
-                <span className="text-xs text-muted-foreground">({analysis.timestamp} IST)</span>
+                <span className="text-xs text-muted-foreground text-right">({analysis.timestamp} IST)</span>
             </div>
             <CardDescription>
                 Expiry: {analysis.expiry}, Spot: {analysis.spotPrice.toFixed(2)}, DTE: {analysis.dte}, Lot Size: {analysis.lotSize} units
@@ -65,7 +65,7 @@ const AnalysisCard = ({ analysis }: { analysis: AnalysisPayload }) => (
             </div>
              <Separator />
             <div>
-                <h4 className="font-semibold mb-2 flex items-center gap-2"><FileText size={14}/> Top Opportunities (Δ=0.15-0.25) - Scoring Explained:</h4>
+                <h4 className="font-semibold mb-2 flex items-center gap-2"><Target size={14}/> Top Opportunities (Δ=0.15-0.25) - Scoring Explained:</h4>
                 {analysis.opportunities.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {analysis.opportunities.map((opp) => (
@@ -76,23 +76,35 @@ const AnalysisCard = ({ analysis }: { analysis: AnalysisPayload }) => (
                    <p className="text-sm text-muted-foreground">No qualified opportunities found for the selected criteria.</p>
                 )}
             </div>
+            {analysis.tradeRecommendation && (
+                <>
+                <Separator />
+                <div>
+                     <h4 className="font-semibold mb-2 flex items-center gap-2"><Award size={14}/> Trade Recommendation:</h4>
+                     <div className="text-muted-foreground space-y-1 bg-background/50 p-2 rounded-md">
+                        <p>{analysis.tradeRecommendation.reason}</p>
+                        <p className="font-bold text-primary">Recommended Trade: {analysis.tradeRecommendation.tradeCommand}</p>
+                     </div>
+                </div>
+                </>
+            )}
              <Separator />
              <div>
                 <h4 className="font-semibold mb-2">📊 Qualified Strikes (Δ=0.15-0.25 Only):</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2">
                     <div>
                          <h5 className="font-medium mb-1">✅ Qualified CE Strikes ({analysis.qualifiedStrikes.ce.length}):</h5>
-                         <div className="space-y-1 text-muted-foreground bg-background/50 p-2 rounded-md">
-                             {analysis.qualifiedStrikes.ce.length > 0 ? analysis.qualifiedStrikes.ce.map(s => (
-                                 <p key={s.strike}>{s.strike}: Δ={s.delta.toFixed(3)}, IV={s.iv.toFixed(1)}%, LTP={s.ltp.toFixed(2)}, Liq: {s.liquidity.grade}</p>
+                         <div className="space-y-2 text-muted-foreground bg-background/50 p-2 rounded-md">
+                             {analysis.qualifiedStrikes.ce.length > 0 ? analysis.qualifiedStrikes.ce.map((s, idx) => (
+                                 <p key={s.strike}>{idx + 1}. {s.strike}: Δ={s.delta.toFixed(3)}, IV={s.iv.toFixed(2)}%, LTP={s.ltp.toFixed(2)}, PoP={s.pop.toFixed(1)}%, Liq: {s.liquidity.grade}<br/><span className="font-mono text-primary/80">/paper CE {s.strike} SELL 1 {s.ltp.toFixed(2)}</span></p>
                              )) : <p>None</p>}
                          </div>
                     </div>
                      <div>
                          <h5 className="font-medium mb-1">✅ Qualified PE Strikes ({analysis.qualifiedStrikes.pe.length}):</h5>
-                         <div className="space-y-1 text-muted-foreground bg-background/50 p-2 rounded-md">
-                            {analysis.qualifiedStrikes.pe.length > 0 ? analysis.qualifiedStrikes.pe.map(s => (
-                                 <p key={s.strike}>{s.strike}: Δ={s.delta.toFixed(3)}, IV={s.iv.toFixed(1)}%, LTP={s.ltp.toFixed(2)}, Liq: {s.liquidity.grade}</p>
+                         <div className="space-y-2 text-muted-foreground bg-background/50 p-2 rounded-md">
+                            {analysis.qualifiedStrikes.pe.length > 0 ? analysis.qualifiedStrikes.pe.map((s, idx) => (
+                                 <p key={s.strike}>{idx + 1}. {s.strike}: Δ={s.delta.toFixed(3)}, IV={s.iv.toFixed(2)}%, LTP={s.ltp.toFixed(2)}, PoP={s.pop.toFixed(1)}%, Liq: {s.liquidity.grade}<br/><span className="font-mono text-primary/80">/paper PE {s.strike} SELL 1 {s.ltp.toFixed(2)}</span></p>
                              )) : <p>None</p>}
                          </div>
                     </div>
@@ -105,16 +117,16 @@ const AnalysisCard = ({ analysis }: { analysis: AnalysisPayload }) => (
 const OpportunityCard = ({ opportunity }: { opportunity: Opportunity }) => (
     <Card className="bg-background">
         <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-sm">{opportunity.type} {opportunity.strike} SELL (Total Score: {opportunity.total_score})</CardTitle>
+            <CardTitle className="text-sm">{opportunity.type} {opportunity.strike} SELL (Total Score: {opportunity.total_score.toFixed(1)})</CardTitle>
         </CardHeader>
         <CardContent className="text-xs space-y-1 p-3 pt-0">
              <p><strong>LTP:</strong> {opportunity.ltp.toFixed(2)} | <strong>PoP:</strong> {opportunity.pop.toFixed(1)}%</p>
-             <p><strong>Delta:</strong> {opportunity.delta.toFixed(3)} (Score: {opportunity.score_breakdown.deltaScore}/10)</p>
-             <p><strong>IV:</strong> {opportunity.iv.toFixed(1)}% (Score: {opportunity.score_breakdown.ivScore}/10)</p>
-             <p><strong>Liquidity:</strong> {opportunity.liquidity.grade} (Score: {opportunity.score_breakdown.liquidityScore}/20)</p>
+             <p><strong>Delta:</strong> {opportunity.delta.toFixed(3)} (Score: {opportunity.score_breakdown.deltaScore.toFixed(1)}/10)</p>
+             <p><strong>IV:</strong> {opportunity.iv.toFixed(2)}% (Score: {opportunity.score_breakdown.ivScore.toFixed(1)}/10)</p>
+             <p><strong>Liquidity:</strong> {opportunity.liquidity.grade} (Score: {opportunity.score_breakdown.liquidityScore.toFixed(1)}/20)</p>
              <p><strong>Alignment Bonus:</strong> {opportunity.score_breakdown.alignmentBonus}</p>
              <p className="font-mono text-primary/80 mt-1">/paper {opportunity.type} {opportunity.strike} SELL 1 {opportunity.ltp.toFixed(2)}</p>
-             <p className="italic text-muted-foreground/80">Score: {opportunity.score_breakdown.deltaScore} + {opportunity.score_breakdown.ivScore} + {opportunity.score_breakdown.liquidityScore} + {opportunity.score_breakdown.alignmentBonus} = {opportunity.total_score}</p>
+             <p className="italic text-muted-foreground/80">Score: {opportunity.score_breakdown.deltaScore.toFixed(1)} + {opportunity.score_breakdown.ivScore.toFixed(1)} + {opportunity.score_breakdown.liquidityScore.toFixed(1)} + {opportunity.score_breakdown.alignmentBonus} = {opportunity.total_score.toFixed(1)}</p>
         </CardContent>
     </Card>
 )
