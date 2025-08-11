@@ -159,12 +159,19 @@ class UpstoxAPI {
                 throw new Error(`Upstox API error: ${response.statusText}`);
             }
             const data = await response.json();
-            const expiryDates: string[] = Array.from(new Set(data.data.map((item: any) => item.expiry))).slice(0, 7) as string[];
+            const allExpiries: string[] = Array.from(new Set(data.data.map((item: any) => item.expiry)));
 
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            return expiryDates.sort().map(expiry => {
+            const sortedExpiries = allExpiries
+                .map(expiry => ({ expiry, date: new Date(expiry) }))
+                .filter(item => item.date >= today) // Filter out past expiries
+                .sort((a, b) => a.date.getTime() - b.date.getTime()) // Sort by date
+                .slice(0, 7) // Take the closest 7
+                .map(item => item.expiry);
+
+            return sortedExpiries.map(expiry => {
                 const expDate = new Date(expiry);
                 const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
                 const lastDayOfMonth = new Date(expDate.getFullYear(), expDate.getMonth() + 1, 0).getDate();
@@ -397,8 +404,3 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
-
-
-    
-
-    
