@@ -14,17 +14,11 @@ const config = {
 
 const TOKEN_FILE_PATH = path.join(process.cwd(), 'upstox_access_token.json');
 
-// This variable will hold the token in memory for the current session.
-let currentAccessToken: string | null = null;
-
-
 // ===== API & TOKEN MANAGEMENT =====
 
 async function saveAccessToken(token: string) {
     try {
         await fs.writeFile(TOKEN_FILE_PATH, JSON.stringify({ accessToken: token, timestamp: new Date().toISOString() }));
-        // CRITICAL FIX: Immediately update the in-memory token for the current lifecycle.
-        currentAccessToken = token;
     } catch (error) {
         console.error('Error saving access token:', error);
         // In a serverless environment, we might not be able to write files.
@@ -33,19 +27,11 @@ async function saveAccessToken(token: string) {
 }
 
 async function getAccessToken(): Promise<string | null> {
-    // 1. Prefer the in-memory token for this session
-    if (currentAccessToken) {
-        return currentAccessToken;
-    }
-    // 2. If not available, try to read from the file (for persistence between restarts)
+    // ALWAYS read from the file to ensure we get the latest token in a serverless environment.
     try {
         const data = await fs.readFile(TOKEN_FILE_PATH, 'utf-8');
         const { accessToken } = JSON.parse(data);
-        if (accessToken) {
-            currentAccessToken = accessToken; // Load it into memory
-            return accessToken;
-        }
-        return null;
+        return accessToken || null;
     } catch (error) {
         // File might not exist, which is fine on first run.
         return null;
@@ -82,7 +68,7 @@ async function exchangeCodeForToken(authCode: string): Promise<string | null> {
         const data = await response.json();
         const accessToken = data.access_token;
         if (accessToken) {
-            // Set the token for the current session AND save it for later
+            // Save the new token to the file.
             await saveAccessToken(accessToken);
             return accessToken;
         }
@@ -168,8 +154,7 @@ class UpstoxAPI {
             const response = await fetch(url, { headers });
             if (!response.ok) {
                  if (response.status === 401) {
-                     // The token is invalid, clear it from memory so we are forced to get a new one.
-                     currentAccessToken = null;
+                     // The token is invalid.
                      throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
                  }
                 throw new Error(`Upstox API error: ${response.statusText}`);
@@ -205,8 +190,7 @@ class UpstoxAPI {
             const response = await fetch(url, { headers });
             if (!response.ok) {
                 if (response.status === 401) {
-                     // The token is invalid, clear it from memory so we are forced to get a new one.
-                     currentAccessToken = null;
+                     // The token is invalid.
                      throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
                 }
                 throw new Error(`Upstox API error: ${response.statusText}`);
