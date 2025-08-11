@@ -28,9 +28,14 @@ async function getAccessToken(): Promise<string | null> {
     try {
         const data = await fs.readFile(TOKEN_FILE_PATH, 'utf-8');
         const { accessToken } = JSON.parse(data);
-        return accessToken || null;
+        if (!accessToken) {
+            throw new Error('Access token not found in file.');
+        }
+        return accessToken;
     } catch (error) {
-        return null;
+        console.error('Error reading access token:', error);
+        // Throw a specific error to be caught later
+        throw new Error("Failed to read the stored access token. Please try the 'auth' command again.");
     }
 }
 
@@ -123,7 +128,7 @@ const ErrorPayloadSchema = z.object({
     message: z.string(),
     authUrl: z.string().optional(),
 });
-export type ErrorPayload = z.infer<typeof ErrorPayloadSchema>;
+export type ErrorPayload = z.infer<ErrorPayloadSchema>;
 
 
 export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload;
@@ -315,12 +320,12 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
     }
 
 
-    if (lowerCaseMessage.startsWith('start') || lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
+    if (lowerCaseMessage.startsWith('start')) {
         try {
             const expiries = await UpstoxAPI.getExpiries();
             return { type: 'expiries', expiries };
         } catch (e: any) {
-            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
+            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired") || e.message.includes("Failed to read the stored access token")){
                 const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
                 return { type: 'error', message: e.message, authUrl };
             }
@@ -354,7 +359,7 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
             };
 
         } catch (e: any) {
-            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
+             if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired") || e.message.includes("Failed to read the stored access token")){
                  const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
                 return { type: 'error', message: e.message, authUrl };
             }
@@ -393,5 +398,7 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
 
+
+    
 
     
