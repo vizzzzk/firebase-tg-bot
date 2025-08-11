@@ -14,6 +14,7 @@ import { BotResponsePayload } from '@/lib/bot-logic';
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -47,6 +48,11 @@ export default function Home() {
       content: '', // Content will be handled by payload renderer
       payload: response,
     };
+    
+    // If the response contains a new access token, store it.
+    if (response.accessToken) {
+        setAccessToken(response.accessToken);
+    }
 
     if (response.type === 'error') {
         // For error messages, we display them directly. If there's an auth URL, we render it as a clickable link.
@@ -90,7 +96,7 @@ export default function Home() {
       // Remove the optimistic user message to avoid duplication
       setMessages(prev => prev.slice(0, prev.length-1));
 
-      const result = await sendMessage(trimmedInput);
+      const result = await sendMessage(trimmedInput, accessToken);
       processAndSetMessages(trimmedInput, result);
     });
   }

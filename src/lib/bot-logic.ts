@@ -2,8 +2,6 @@
 'use server';
 
 import { z } from 'zod';
-import * as fs from 'fs/promises';
-import path from 'path';
 
 // ===== CONFIGURATION =====
 const config = {
@@ -12,34 +10,10 @@ const config = {
     UPSTOX_REDIRECT_URI: "https://localhost.com",
 };
 
-const TOKEN_FILE_PATH = path.join(process.cwd(), 'upstox_access_token.json');
 
 // ===== API & TOKEN MANAGEMENT =====
 
-async function saveAccessToken(token: string) {
-    try {
-        await fs.writeFile(TOKEN_FILE_PATH, JSON.stringify({ accessToken: token, timestamp: new Date().toISOString() }));
-    } catch (error) {
-        console.error('Error saving access token:', error);
-    }
-}
-
-async function getAccessToken(): Promise<string | null> {
-    try {
-        const data = await fs.readFile(TOKEN_FILE_PATH, 'utf-8');
-        const { accessToken } = JSON.parse(data);
-        if (!accessToken) {
-            throw new Error('Access token not found in file.');
-        }
-        return accessToken;
-    } catch (error) {
-        console.error('Error reading access token:', error);
-        // Throw a specific error to be caught later
-        throw new Error("Failed to read the stored access token. Please try the 'auth' command again.");
-    }
-}
-
-async function exchangeCodeForToken(authCode: string): Promise<string | null> {
+async function exchangeCodeForToken(authCode: string): Promise<string> {
     const url = "https://api-v2.upstox.com/login/authorization/token";
     const headers = {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -68,11 +42,10 @@ async function exchangeCodeForToken(authCode: string): Promise<string | null> {
 
         const data = await response.json();
         const accessToken = data.access_token;
-        if (accessToken) {
-            await saveAccessToken(accessToken);
-            return accessToken;
+        if (!accessToken) {
+             throw new Error(`Upstox token exchange failed. No access token returned.`);
         }
-        return null;
+        return accessToken;
     } catch (error: any) {
         console.error('Error exchanging code for token:', error);
         throw error;
@@ -102,7 +75,11 @@ const MarketAnalysisSchema = z.object({
 });
 export type MarketAnalysis = z.infer<typeof MarketAnalysisSchema>;
 
-const AnalysisPayloadSchema = z.object({
+const BasePayloadSchema = z.object({
+    accessToken: z.string().optional(),
+});
+
+const AnalysisPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('analysis'),
     spotPrice: z.number(),
     dte: z.number(),
@@ -117,13 +94,13 @@ const ExpirySchema = z.object({
 });
 export type Expiry = z.infer<typeof ExpirySchema>;
 
-const ExpiryPayloadSchema = z.object({
+const ExpiryPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('expiries'),
     expiries: z.array(ExpirySchema),
 });
 export type ExpiryPayload = z.infer<typeof ExpiryPayloadSchema>;
 
-const ErrorPayloadSchema = z.object({
+const ErrorPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('error'),
     message: z.string(),
     authUrl: z.string().optional(),
@@ -136,8 +113,7 @@ export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload;
 
 // ===== API HELPERS =====
 class UpstoxAPI {
-    private static async getHeaders() {
-        const accessToken = await getAccessToken();
+    private static getHeaders(accessToken: string | null | undefined) {
         if (!accessToken) {
              throw new Error("Upstox Access Token is not configured. Please use the 'auth' command.");
         }
@@ -147,8 +123,8 @@ class UpstoxAPI {
         };
     }
 
-    static async getExpiries(): Promise<Expiry[]> {
-        const headers = await this.getHeaders();
+    static async getExpiries(accessToken: string | null | undefined): Promise<Expiry[]> {
+        const headers = this.getHeaders(accessToken);
         const url = "https://api.upstox.com/v2/option/contract?instrument_key=NSE_INDEX|Nifty%2050";
         try {
             const response = await fetch(url, { headers });
@@ -164,33 +140,31 @@ class UpstoxAPI {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            const sortedExpiries = allExpiries
+            return allExpiries
                 .map(expiry => ({ expiry, date: new Date(expiry) }))
                 .filter(item => item.date >= today) // Filter out past expiries
                 .sort((a, b) => a.date.getTime() - b.date.getTime()) // Sort by date
                 .slice(0, 7) // Take the closest 7
-                .map(item => item.expiry);
+                .map(item => {
+                    const expDate = item.date;
+                    const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
+                    const lastDayOfMonth = new Date(expDate.getFullYear(), expDate.getMonth() + 1, 0).getDate();
+                    const isMonthly = (lastDayOfMonth - expDate.getDate()) < 7;
+                    const label = isMonthly ? "(M)" : "(W)";
 
-            return sortedExpiries.map(expiry => {
-                const expDate = new Date(expiry);
-                const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
-                const lastDayOfMonth = new Date(expDate.getFullYear(), expDate.getMonth() + 1, 0).getDate();
-                const isMonthly = (lastDayOfMonth - expDate.getDate()) < 7;
-                const label = isMonthly ? "(M)" : "(W)";
-
-                return {
-                    value: expiry,
-                    label: `${expiry} ${label} DTE: ${dte}`
-                };
-            });
+                    return {
+                        value: item.expiry,
+                        label: `${item.expiry} ${label} DTE: ${dte}`
+                    };
+                });
         } catch (error: any) {
             console.error("Error fetching expiries:", error);
             throw error;
         }
     }
 
-    static async getOptionChain(expiryDate: string): Promise<any> {
-        const headers = await this.getHeaders();
+    static async getOptionChain(accessToken: string | null | undefined, expiryDate: string): Promise<any> {
+        const headers = this.getHeaders(accessToken);
         const url = `https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX|Nifty%2050&expiry_date=${expiryDate}`;
         try {
             const response = await fetch(url, { headers });
@@ -307,20 +281,16 @@ class MarketAnalyzer {
  * @param message The user's input message.
  * @returns A promise that resolves to the bot's response payload.
  */
-export async function getBotResponse(message: string): Promise<BotResponsePayload> {
+export async function getBotResponse(message: string, token: string | null | undefined): Promise<BotResponsePayload> {
     const lowerCaseMessage = message.toLowerCase().trim();
 
     // Handle Auth Code submission
     if (lowerCaseMessage.length > 4 && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(' ')) {
         try {
-            const accessToken = await exchangeCodeForToken(message);
-            if (accessToken) {
-                // TOKEN IS GOOD, IMMEDIATELY FETCH EXPIRIES
-                const expiries = await UpstoxAPI.getExpiries();
-                return { type: 'expiries', expiries };
-            } else {
-                return { type: 'error', message: "❌ Authorization failed. The code might be invalid or expired. Please try '/auth' again." };
-            }
+            const newAccessToken = await exchangeCodeForToken(message);
+            // Immediately fetch expiries with the new token
+            const expiries = await UpstoxAPI.getExpiries(newAccessToken);
+            return { type: 'expiries', expiries, accessToken: newAccessToken };
         } catch (e: any) {
              return { type: 'error', message: `❌ Authorization error: ${e.message}` };
         }
@@ -329,10 +299,10 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
 
     if (lowerCaseMessage.startsWith('start')) {
         try {
-            const expiries = await UpstoxAPI.getExpiries();
-            return { type: 'expiries', expiries };
+            const expiries = await UpstoxAPI.getExpiries(token);
+            return { type: 'expiries', expiries, accessToken: token ?? undefined };
         } catch (e: any) {
-            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired") || e.message.includes("Failed to read the stored access token")){
+            if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
                 const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
                 return { type: 'error', message: e.message, authUrl };
             }
@@ -343,9 +313,9 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
     if (lowerCaseMessage.startsWith('exp:')) {
         const expiry = lowerCaseMessage.split(':')[1];
         try {
-            const optionChain = await UpstoxAPI.getOptionChain(expiry);
+            const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
             if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
-                return { type: 'error', message: `No option chain data found for ${expiry}.` };
+                return { type: 'error', message: `No option chain data found for ${expiry}.`, accessToken: token ?? undefined };
             }
 
             const spotPrice = optionChain.data[0]?.underlying_spot_price ?? 0;
@@ -363,10 +333,11 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
                 dte,
                 marketAnalysis,
                 opportunities,
+                accessToken: token ?? undefined
             };
 
         } catch (e: any) {
-             if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired") || e.message.includes("Failed to read the stored access token")){
+             if (e.message.includes("Access Token is not configured") || e.message.includes("invalid or has expired")){
                  const authUrl = `https://api-v2.upstox.com/login/authorization/dialog?response_type=code&client_id=${config.UPSTOX_API_KEY}&redirect_uri=${config.UPSTOX_REDIRECT_URI}`;
                 return { type: 'error', message: e.message, authUrl };
             }
@@ -395,9 +366,8 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
 1. Use the **Auth** button or type \`auth\` to get a link to log into Upstox.
 2. After logging in, you'll be redirected. Copy the \`code\` from the URL in the address bar.
 3. Paste the code directly into the chat here.
-4. The bot will automatically get an access token.
-5. Use the **Start** button or type \`start\` to begin your analysis.
-6. Click on an expiry date to get a detailed market analysis and trading opportunities.
+4. The bot will automatically get an access token and show you the available expiries.
+5. Click on an expiry date to get a detailed market analysis and trading opportunities.
 `;
         return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
     }
