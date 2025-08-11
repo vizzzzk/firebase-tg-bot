@@ -285,7 +285,7 @@ export async function getBotResponse(message: string, token: string | null | und
     const lowerCaseMessage = message.toLowerCase().trim();
 
     // Check if the message is a potential auth code.
-    const isAuthCode = lowerCaseMessage.length > 4 && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(' ');
+    const isAuthCode = /^[a-z0-9\-_]+$/i.test(lowerCaseMessage) && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(':');
 
     if (isAuthCode) {
         try {
