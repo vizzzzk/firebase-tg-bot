@@ -21,19 +21,15 @@ async function saveAccessToken(token: string) {
         await fs.writeFile(TOKEN_FILE_PATH, JSON.stringify({ accessToken: token, timestamp: new Date().toISOString() }));
     } catch (error) {
         console.error('Error saving access token:', error);
-        // In a serverless environment, we might not be able to write files.
-        // We can proceed without saving, but the token will be lost on restart.
     }
 }
 
 async function getAccessToken(): Promise<string | null> {
-    // ALWAYS read from the file to ensure we get the latest token in a serverless environment.
     try {
         const data = await fs.readFile(TOKEN_FILE_PATH, 'utf-8');
         const { accessToken } = JSON.parse(data);
         return accessToken || null;
     } catch (error) {
-        // File might not exist, which is fine on first run.
         return null;
     }
 }
@@ -68,7 +64,6 @@ async function exchangeCodeForToken(authCode: string): Promise<string | null> {
         const data = await response.json();
         const accessToken = data.access_token;
         if (accessToken) {
-            // Save the new token to the file.
             await saveAccessToken(accessToken);
             return accessToken;
         }
@@ -154,7 +149,6 @@ class UpstoxAPI {
             const response = await fetch(url, { headers });
             if (!response.ok) {
                  if (response.status === 401) {
-                     // The token is invalid.
                      throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
                  }
                 throw new Error(`Upstox API error: ${response.statusText}`);
@@ -190,7 +184,6 @@ class UpstoxAPI {
             const response = await fetch(url, { headers });
             if (!response.ok) {
                 if (response.status === 401) {
-                     // The token is invalid.
                      throw new Error("Your Upstox Access Token is invalid or has expired. Please use the 'auth' command to get a new one.");
                 }
                 throw new Error(`Upstox API error: ${response.statusText}`);
@@ -306,12 +299,13 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
     const lowerCaseMessage = message.toLowerCase().trim();
 
     // Handle Auth Code submission
-    // A simple check to see if the message could be an auth code.
     if (lowerCaseMessage.length > 4 && lowerCaseMessage.length < 50 && !lowerCaseMessage.includes(' ')) {
         try {
             const accessToken = await exchangeCodeForToken(message);
             if (accessToken) {
-                return { type: 'error', message: "✅ Authorization successful! You can now use the 'start' command." };
+                // TOKEN IS GOOD, IMMEDIATELY FETCH EXPIRIES
+                const expiries = await UpstoxAPI.getExpiries();
+                return { type: 'expiries', expiries };
             } else {
                 return { type: 'error', message: "❌ Authorization failed. The code might be invalid or expired. Please try '/auth' again." };
             }
@@ -393,9 +387,11 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
 5. Use the **Start** button or type \`start\` to begin your analysis.
 6. Click on an expiry date to get a detailed market analysis and trading opportunities.
 `;
-        // A simple markdown conversion for bolding
         return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**') };
     }
 
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.` };
 }
+
+
+    
