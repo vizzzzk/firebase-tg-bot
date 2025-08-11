@@ -225,7 +225,7 @@ export async function getBotResponse(message: string): Promise<BotResponsePayloa
     const lowerCaseMessage = message.toLowerCase().trim();
 
     // Initial greeting or help
-    if (lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
+    if (lowerCaseMessage === 'start' || lowerCaseMessage.startsWith('hello') || lowerCaseMessage.startsWith('hi') || lowerCaseMessage.startsWith('/start')) {
         try {
             const expiries = await UpstoxAPI.getExpiries();
             return { type: 'expiries', expiries };
