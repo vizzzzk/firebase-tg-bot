@@ -8,7 +8,7 @@ const config = {
     UPSTOX_API_KEY: "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: "3yn8j0huzj",
     UPSTOX_REDIRECT_URI: "https://localhost.com",
-    NIFTY_LOT_SIZE: 75, // Corrected Lot Size
+    NIFTY_LOT_SIZE: 75,
 };
 
 // ===== PORTFOLIO MANAGEMENT =====
@@ -30,6 +30,7 @@ const PortfolioSchema = z.object({
   positions: z.array(PositionSchema),
   initialFunds: z.number(),
   realizedPnL: z.number(),
+  lastActiveExpiry: z.string().optional(),
 });
 export type Portfolio = z.infer<typeof PortfolioSchema>;
 
@@ -145,7 +146,7 @@ const ExpirySchema = z.object({
     value: z.string(),
     label: z.string(),
 });
-export type Expiry = z.infer<typeof ExpirySchema>;
+export type Expiry = z.infer<ExpirySchema>;
 
 const ExpiryPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('expiries'),
@@ -353,14 +354,14 @@ class MarketAnalyzer {
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                 const iv = (ceData.option_greeks?.iv ?? 0);
+                 const iv = (ceData.option_greeks?.iv ?? 0) / 100;
                  const pop = (1 - Math.abs(delta)) * 100;
 
                  const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop, instrumentKey: ceData.instrument_key };
                  
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min(iv / 3, 10).toFixed(1));
+                    const ivScore = parseFloat(Math.min(iv * 100 / 3, 10).toFixed(1));
                     const alignmentBonus = 'CE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     
@@ -375,14 +376,14 @@ class MarketAnalyzer {
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                 const iv = (peData.option_greeks?.iv ?? 0);
+                 const iv = (peData.option_greeks?.iv ?? 0) / 100;
                  const pop = (1-Math.abs(delta)) * 100;
                  
                  const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop, instrumentKey: peData.instrument_key };
 
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min(iv / 3, 10).toFixed(1));
+                    const ivScore = parseFloat(Math.min(iv * 100 / 3, 10).toFixed(1));
                     const alignmentBonus = 'PE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     const score_breakdown = { deltaScore, ivScore, liquidityScore: liquidity.score, alignmentBonus };
@@ -414,7 +415,7 @@ class MarketAnalyzer {
 
 
 // A helper to find the corresponding instrument key from the analysis data
-async function findInstrumentKey(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<string> {
+async function findInstrumentKey(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<string | undefined> {
     const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
     const strikeData = optionChain.data.find((d: any) => d.strike_price === strike);
     if (type === 'CE') {
@@ -438,9 +439,7 @@ export async function getBotResponse(message: string, token: string | null | und
     // Command whitelist for pre-auth code check
     const isStandardCommand = ['start', 'auth', 'help', '/paper', '/portfolio', '/close'].includes(mainCommand) || mainCommand.startsWith('exp:');
 
-    // This is the most specific check. It should be first.
-    // A typical auth code is a short alphanumeric string.
-    if (/^[a-zA-Z0-9]{6,50}$/.test(command) && !isStandardCommand) {
+    if (!isStandardCommand && /^[a-zA-Z0-9]{6,50}$/.test(command)) {
         try {
             const newAccessToken = await exchangeCodeForToken(command);
             const expiries = await UpstoxAPI.getExpiries(newAccessToken);
@@ -497,10 +496,12 @@ export async function getBotResponse(message: string, token: string | null | und
         case '/paper':
             if (parts.length === 6) {
                 const [_, type, strike, action, qty, price] = parts;
-
-                const lastExpiry = portfolio.positions.length > 0 ? portfolio.positions[portfolio.positions.length -1].expiry : new Date().toISOString().split('T')[0];
-
-                const instrumentKey = await findInstrumentKey(token, lastExpiry, parseFloat(strike), type.toUpperCase() as 'CE' | 'PE');
+                
+                if (!portfolio.lastActiveExpiry) {
+                   return { type: 'error', message: `Please run an analysis for an expiry date first before placing a trade.`, portfolio };
+                }
+                
+                const instrumentKey = await findInstrumentKey(token, portfolio.lastActiveExpiry, parseFloat(strike), type.toUpperCase() as 'CE' | 'PE');
 
                 if (!instrumentKey) {
                     return { type: 'error', message: `Could not find instrument key for ${type} ${strike}. Cannot place trade.`, portfolio };
@@ -513,7 +514,7 @@ export async function getBotResponse(message: string, token: string | null | und
                     action: action.toUpperCase() as 'BUY' | 'SELL',
                     quantity: parseInt(qty),
                     entryPrice: parseFloat(price),
-                    expiry: lastExpiry,
+                    expiry: portfolio.lastActiveExpiry,
                     entryTimestamp: new Date().toISOString(),
                     instrumentKey,
                 };
@@ -637,8 +638,7 @@ export async function getBotResponse(message: string, token: string | null | und
             
             const timestamp = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
             
-            const updatedPortfolio = { ...portfolio, positions: portfolio.positions.map(p => ({...p, expiry}))};
-
+            const updatedPortfolio = { ...portfolio, lastActiveExpiry: expiry };
 
             return {
                 type: 'analysis',
