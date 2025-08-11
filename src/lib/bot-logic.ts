@@ -169,7 +169,7 @@ const PaperTradePayloadSchema = BasePayloadSchema.extend({
     type: z.literal('paper-trade'),
     message: z.string(),
 });
-export type PaperTradePayload = z.infer<PaperTradePayloadSchema>;
+export type PaperTradePayload = z.infer<typeof PaperTradePayloadSchema>;
 
 const PortfolioPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('portfolio'),
@@ -261,12 +261,20 @@ class UpstoxAPI {
                 console.error("Failed to fetch or parse option chain.");
                 return 0;
             }
-
+    
+            // Upstox API strike_price can be a float.
             const targetStrike = parseFloat(strike.toString());
-            const strikeData = optionChain.data.find((d: any) => d.strike_price === targetStrike);
-
+    
+            const strikeData = optionChain.data.find((d: any) => {
+                // Ensure we handle potential type differences by parsing the item's strike_price to a float as well.
+                const itemStrike = parseFloat(d.strike_price);
+                return itemStrike === targetStrike;
+            });
+    
             if (!strikeData) {
                 console.error(`Strike ${targetStrike} not found in option chain for ${expiryDate}`);
+                const allStrikes = optionChain.data.map((d:any) => d.strike_price);
+                console.log("Available strikes:", allStrikes.slice(0, 20)); // Log first 20 available strikes for debugging
                 return 0;
             }
             
@@ -276,14 +284,21 @@ class UpstoxAPI {
                 return 0;
             }
             
-            // The correct field for live price is last_price
+            // The correct field for live price is `last_price` according to Upstox docs and observation.
             const ltp = optionDetails.market_data.last_price;
+            
             if (typeof ltp !== 'number') {
-                 console.error(`LTP is not a number for ${optionType} ${strike}:`, ltp);
+                 console.error(`LTP is not a number for ${optionType} ${strike}:`, ltp, `(type: ${typeof ltp})`);
+                 // Fallback to 'ltp' if 'last_price' is not a number, just in case of API inconsistencies.
+                 const fallbackLtp = optionDetails.market_data.ltp;
+                 if(typeof fallbackLtp === 'number'){
+                     console.log(`Found LTP in fallback field 'ltp': ${fallbackLtp}`);
+                     return fallbackLtp;
+                 }
                  return 0;
             }
-
-            console.log(`Found LTP: ${ltp}`);
+    
+            console.log(`Found LTP in 'last_price': ${ltp}`);
             return ltp;
         } catch (error: any) {
             console.error(`Error in getLTP for ${optionType} ${strike} @ ${expiryDate}:`, error);
