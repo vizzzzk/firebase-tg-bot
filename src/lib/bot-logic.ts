@@ -278,6 +278,7 @@ class UpstoxAPI {
             }
             const data = await response.json();
             // Defensive coding: check if data and the nested properties exist
+            // CRITICAL FIX: Use the original, un-encoded instrumentKey to parse the response.
             const ltp = data?.data?.[instrumentKey]?.last_price;
             return typeof ltp === 'number' ? ltp : 0;
         } catch (error: any) {
@@ -797,3 +798,5 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }
+
+    
