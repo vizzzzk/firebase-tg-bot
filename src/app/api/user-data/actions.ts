@@ -1,11 +1,9 @@
 
 "use server";
 
-import { getApp } from '@/lib/firebase';
-import { doc, getDoc, setDoc, updateDoc, getFirestore } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import type { Portfolio } from '@/lib/bot-logic';
-
-const db = getFirestore(getApp());
 
 interface UserData {
   accessToken?: string | null;
