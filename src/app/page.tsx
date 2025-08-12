@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen, LogIn, LogOut } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,11 @@ import { sendMessage } from './actions';
 import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { app } from '@/lib/firebase';
+import { getUserData, updateUserData } from './api/user-data/actions';
+
+const auth = getAuth(app);
 
 const initialPortfolio: Portfolio = { 
     positions: [], 
@@ -31,55 +36,56 @@ export default function Home() {
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Load state from localStorage on initial render
+  // Auth state listener
   useEffect(() => {
-    try {
-      const savedToken = localStorage.getItem('upstox_access_token');
-      const savedPortfolio = localStorage.getItem('paper_portfolio');
-      
-      if (savedToken) {
-        setAccessToken(JSON.parse(savedToken));
-      }
-      if (savedPortfolio) {
-        setPortfolio(JSON.parse(savedPortfolio));
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setIsLoading(true);
+      if (currentUser) {
+        setUser(currentUser);
+        try {
+          const userData = await getUserData(currentUser.uid);
+          if (userData) {
+            setAccessToken(userData.accessToken || null);
+            setPortfolio(userData.portfolio || initialPortfolio);
+          } else {
+            // New user, set initial state
+            setPortfolio(initialPortfolio);
+            setAccessToken(null);
+          }
+           const initialBotMessage: Message = {
+            id: crypto.randomUUID(),
+            role: 'bot',
+            content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
+          };
+          setMessages([initialBotMessage]);
+
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+          toast({ title: "Error", description: "Could not load your data.", variant: "destructive" });
+          setPortfolio(initialPortfolio);
+          setAccessToken(null);
+        }
       } else {
-        // If there is no saved portfolio, add the initial bot message
-        const initialBotMessage: Message = {
-          id: crypto.randomUUID(),
-          role: 'bot',
-          content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
-        };
-        setMessages([initialBotMessage]);
+        setUser(null);
+        setMessages([]);
+        setPortfolio(initialPortfolio);
+        setAccessToken(null);
       }
-    } catch (error) {
-      console.error("Failed to load state from localStorage", error);
-      // If parsing fails, clear the corrupted data
-      localStorage.removeItem('upstox_access_token');
-      localStorage.removeItem('paper_portfolio');
-    }
-  }, []);
+      setIsLoading(false);
+    });
+    return () => unsubscribe();
+  }, [toast]);
 
-  // Save state to localStorage whenever it changes
-  useEffect(() => {
-    try {
-      if (accessToken) {
-        localStorage.setItem('upstox_access_token', JSON.stringify(accessToken));
-      } else {
-        localStorage.removeItem('upstox_access_token');
-      }
-    } catch (error) {
-       console.error("Failed to save access token to localStorage", error);
-    }
-  }, [accessToken]);
 
+  // Save state to Firestore whenever it changes
   useEffect(() => {
-    try {
-      localStorage.setItem('paper_portfolio', JSON.stringify(portfolio));
-    } catch (error) {
-       console.error("Failed to save portfolio to localStorage", error);
+    if (user && !isLoading) {
+      updateUserData(user.uid, { accessToken, portfolio });
     }
-  }, [portfolio]);
+  }, [accessToken, portfolio, user, isLoading]);
 
 
   useEffect(() => {
@@ -88,19 +94,28 @@ export default function Home() {
     }
   }, [messages]);
   
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Authentication error:", error);
+      toast({ title: "Login Failed", description: "Could not log in with Google.", variant: "destructive" });
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+  };
+  
   const resetPortfolio = () => {
-    setPortfolio(initialPortfolio);
-    setAccessToken(null);
-    localStorage.removeItem('paper_portfolio');
-    localStorage.removeItem('upstox_access_token');
+    const clearedPortfolio = { ...initialPortfolio, lastActiveExpiry: portfolio.lastActiveExpiry };
+    setPortfolio(clearedPortfolio);
+    setAccessToken(null); // Also clear the access token
     toast({
       title: "Portfolio Reset",
-      description: "Your paper trading portfolio and access token have been cleared. The page will now reload.",
+      description: "Your paper trading portfolio and access token have been cleared.",
     });
-     // Force a reload to clear all state
-    setTimeout(() => {
-      window.location.reload();
-    }, 1500);
   }
 
   const processAndSetMessages = (userInput: string, response: BotResponsePayload) => {
@@ -135,7 +150,7 @@ export default function Home() {
               <a href={response.authUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline font-semibold mt-2 inline-block">
                 Click here to authorize with Upstox
               </a>
-              <p className="text-xs mt-2 text-muted-foreground">After authorizing, you will be redirected. Copy the `code` from the new URL's address bar and paste it in the chat.</p>
+              <p className="text-xs mt-2 text-muted-foreground">After authorizing, you will be redirected. Copy the `code` from the new URL's address bar (or the full URL) and paste it in the chat.</p>
             </div>
           );
         } else {
@@ -269,17 +284,53 @@ export default function Home() {
     link.click();
     document.body.removeChild(link);
   }
+  
+  if (isLoading) {
+    return (
+        <div className="flex items-center justify-center min-h-screen bg-background">
+            <Loader className="w-12 h-12 animate-spin text-primary" />
+        </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background p-4">
+        <Card className="w-full max-w-md shadow-2xl rounded-2xl">
+          <CardHeader>
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Bot className="w-10 h-10 text-primary" />
+              <CardTitle className="text-3xl font-bold font-headline">Welcome to Webot</CardTitle>
+            </div>
+            <CardDescription className="text-center">
+              Your professional NIFTY options analysis assistant. Please log in to continue.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center">
+            <Button onClick={handleLogin} size="lg">
+              <LogIn /> Login with Google
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
       <Card className="w-full max-w-2xl h-[90vh] flex flex-col shadow-2xl rounded-2xl">
         <CardHeader className="border-b">
-          <div className="flex items-center gap-3">
-            <Bot className="w-8 h-8 text-primary" />
-            <div>
-              <CardTitle className="text-2xl font-bold font-headline">Webot</CardTitle>
-              <CardDescription>Professional NIFTY Options Analysis</CardDescription>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Bot className="w-8 h-8 text-primary" />
+              <div>
+                <CardTitle className="text-2xl font-bold font-headline">Webot</CardTitle>
+                <CardDescription>Professional NIFTY Options Analysis</CardDescription>
+              </div>
             </div>
+             <Button onClick={handleLogout} variant="outline" size="sm">
+                <LogOut className="w-4 h-4 mr-2" /> Logout
+            </Button>
           </div>
         </CardHeader>
         <CardContent ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6">

@@ -570,6 +570,21 @@ function calculateMargin(spotPrice: number, premium: number): number {
     return parseFloat(margin.toFixed(2));
 }
 
+// Function to extract auth code from a URL
+function extractAuthCode(input: string): string | null {
+  try {
+    const url = new URL(input);
+    return url.searchParams.get("code");
+  } catch (error) {
+    // If it's not a valid URL, it might be the code itself.
+    // Basic regex to check for a plausible code format.
+    if (/^[a-zA-Z0-9\-_=]{6,100}$/.test(input)) {
+        return input;
+    }
+    return null;
+  }
+}
+
 /**
  * Main logic function to get bot response.
  * @param message The user's input message.
@@ -580,13 +595,12 @@ export async function getBotResponse(message: string, token: string | null | und
     const parts = command.split(' ');
     const mainCommand = parts[0].toLowerCase();
     
-    // Regex for auth code improved to include hyphens and handle shorter codes
-    const isAuthCode = /^[a-zA-Z0-9\-_=]{6,100}$/.test(command) && !command.includes(' ');
+    // Check if the input is an auth code or a URL containing one.
+    const authCode = extractAuthCode(command);
 
-
-    if (isAuthCode) {
+    if (authCode) {
         try {
-            const newAccessToken = await exchangeCodeForToken(command);
+            const newAccessToken = await exchangeCodeForToken(authCode);
             const expiries = await UpstoxAPI.getExpiries(newAccessToken);
             return { type: 'expiries', expiries, accessToken: newAccessToken, portfolio };
         } catch (e: any) {
