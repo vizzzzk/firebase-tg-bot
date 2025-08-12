@@ -1,8 +1,8 @@
 
 "use server";
 
-import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { initAdminApp } from '@/lib/firebase-admin';
+import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import type { Portfolio } from '@/lib/bot-logic';
 
 interface UserData {
@@ -12,15 +12,17 @@ interface UserData {
   [key: string]: any;
 }
 
-// Function to get user data from Firestore.
+// Function to get user data from Firestore using the Admin SDK.
 // It now returns a structured object to indicate success or failure.
 export async function getUserData(userId: string): Promise<{success: boolean, data?: UserData | null, error?: string}> {
   if (!userId) return { success: true, data: null };
   try {
-    const userDocRef = doc(db, 'users', userId);
-    const docSnap = await getDoc(userDocRef);
+    initAdminApp();
+    const adminDb = getAdminFirestore();
+    const userDocRef = adminDb.collection('users').doc(userId);
+    const docSnap = await userDocRef.get();
 
-    if (docSnap.exists()) {
+    if (docSnap.exists) {
       return { success: true, data: docSnap.data() as UserData };
     } else {
       // It's normal for a new user's doc to not exist yet.
@@ -33,14 +35,16 @@ export async function getUserData(userId: string): Promise<{success: boolean, da
   }
 }
 
-// Function to update or create user data in Firestore.
+// Function to update or create user data in Firestore using the Admin SDK.
 // It now returns a structured object to indicate success or failure.
 export async function updateUserData(userId: string, data: UserData): Promise<{success: boolean, error?: string}> {
    if (!userId) return {success: true}; // Or return an error if userId is essential
   try {
-    const userDocRef = doc(db, 'users', userId);
+    initAdminApp();
+    const adminDb = getAdminFirestore();
+    const userDocRef = adminDb.collection('users').doc(userId);
     // Use set with merge:true to create or update the document atomically.
-    await setDoc(userDocRef, data, { merge: true });
+    await userDocRef.set(data, { merge: true });
     return { success: true };
   } catch (error: any) {
     console.error('Error updating user data in Firestore:', error);

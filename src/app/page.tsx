@@ -13,11 +13,9 @@ import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
 import { onAuthStateChanged, signOut, User as FirebaseUser, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth } from '@/lib/firebase';
 import { getUserData, updateUserData } from './api/user-data/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
@@ -139,12 +137,11 @@ export default function Home() {
         const newUser = userCredential.user;
 
         // **Immediate Document Creation**
-        await setDoc(doc(db, "users", newUser.uid), {
+        await updateUserData(newUser.uid, {
             accessToken: null,
             portfolio: initialPortfolio,
-            createdAt: serverTimestamp(),
             email: newUser.email,
-        }, { merge: true });
+        });
 
         toast({ title: "Success!", description: "Your account has been created and you are logged in." });
         // onAuthStateChanged will handle the rest of the state updates.
@@ -656,5 +653,3 @@ export default function Home() {
     </div>
   );
 }
-
-    
