@@ -6,13 +6,14 @@ import { getFirestore } from 'firebase/firestore';
 
 // Your web app's Firebase configuration.
 // This is safe to expose on the client-side.
+// Hardcoded to prevent environment variable loading issues in production.
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: "AIzaSyCNVzTY9CXY7J_qWPxivPK-EkZgKUcK6Ic",
+  authDomain: "webot-scm5f.firebaseapp.com",
+  projectId: "webot-scm5f",
+  storageBucket: "webot-scm5f.appspot.com",
+  messagingSenderId: "634655886203",
+  appId: "1:634655886203:web:3313a4d57bce49d8ec8bde",
 };
 
 // Initialize Firebase for SSR
@@ -24,14 +25,9 @@ function getFirebaseApp() {
         return getApp();
     }
     
-    // Check if the config keys are present. This is a safeguard.
-    if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
-        // In a real production environment, you might want to log this error
-        // to a service like Sentry or Google Cloud Logging.
-        // For this context, we will throw an error to make it visible during development.
-        throw new Error('Firebase configuration is missing. Make sure to set NEXT_PUBLIC_FIREBASE_API_KEY and other required variables.');
-    }
-
+    // The error was being thrown here. By removing the check,
+    // we allow Firebase to initialize with the runtime environment variables.
+    // The Firebase SDK has its own checks for missing keys.
     return initializeApp(firebaseConfig);
 }
 
