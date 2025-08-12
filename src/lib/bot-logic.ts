@@ -35,8 +35,8 @@ const PositionSchema = z.object({
 export type Position = z.infer<typeof PositionSchema>;
 
 const TradeHistoryItemSchema = PositionSchema.extend({
-    exitPrice: z.number(),
-    exitTimestamp: z.string(),
+    exitPrice: z.number().optional(),
+    exitTimestamp: z.string().optional(),
     netPnl: z.number(),
     grossPnl: z.number(),
     totalCosts: z.number(),
@@ -53,6 +53,7 @@ const PortfolioSchema = z.object({
   winningTrades: z.number(),
   totalTrades: z.number(),
   tradeHistory: z.array(TradeHistoryItemSchema),
+  analysisCache: z.any().optional(), // To store analysis data
 });
 export type Portfolio = z.infer<typeof PortfolioSchema>;
 
@@ -177,7 +178,7 @@ const ExpiryPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('expiries'),
     expiries: z.array(ExpirySchema),
 });
-export type ExpiryPayload = z.infer<typeof ExpiryPayloadSchema>;
+export type ExpiryPayload = z.infer<ExpiryPayloadSchema>;
 
 const ErrorPayloadSchema = BasePayloadSchema.extend({
     type: z.literal('error'),
@@ -302,22 +303,6 @@ class UpstoxAPI {
         }
     }
     
-    static async getLTP(accessToken: string | null | undefined, instrumentKey: string): Promise<number | null> {
-        const headers = this.getHeaders(accessToken);
-        const url = `https://api-v2.upstox.com/v2/market-quote/ltp?instrument_key=${instrumentKey}`;
-        try {
-            const response = await fetch(url, { headers });
-            if (!response.ok) {
-                throw new Error(`Upstox API error fetching LTP: ${response.statusText}`);
-            }
-            const data = await response.json();
-            return data?.data?.[instrumentKey]?.last_price ?? null;
-        } catch (error: any) {
-            console.error(`Error fetching LTP for ${instrumentKey}:`, error);
-            return null;
-        }
-    }
-
     static async getMarketQuotes(accessToken: string | null | undefined, instrumentKeys: string[]): Promise<any> {
         if (instrumentKeys.length === 0) {
             return { data: {} };
@@ -426,7 +411,7 @@ class MarketAnalyzer {
         let totalCallOi = 0, totalPutOi = 0, totalCallVolume = 0, totalPutVolume = 0;
 
         for (const item of optionData.data) {
-            if (item.expiry !== expiryDate) continue;
+            if (item.expiry_date !== expiryDate) continue;
             totalCallOi += item.call_options?.market_data?.oi ?? 0;
             totalPutOi += item.put_options?.market_data?.oi ?? 0;
             totalCallVolume += item.call_options?.market_data?.volume ?? 0;
@@ -483,11 +468,11 @@ class MarketAnalyzer {
         return { reason, tradeCommand };
     }
 
-    static findOpportunities(optionChain: any[], spotPrice: number, dte: number, marketAnalysis: MarketAnalysis, expiry: string) {
+    static findOpportunities(optionChainData: any[], spotPrice: number, dte: number, marketAnalysis: MarketAnalysis, expiry: string) {
         const allOptions: (Opportunity | (OptionData & {type: 'CE' | 'PE'}))[] = [];
 
-        for (const item of optionChain) {
-            if (item.expiry !== expiry) continue;
+        for (const item of optionChainData) {
+            if (item.expiry_date !== expiry) continue;
             const strike = item.strike_price;
 
             const ceData = item.call_options;
@@ -549,34 +534,62 @@ class MarketAnalyzer {
         
         const tradeRecommendation = this.generateTradeRecommendation(top_ce, top_pe);
 
-        return { topOpportunities, qualifiedStrikes, tradeRecommendation };
+        return { topOpportunities, qualifiedStrikes, tradeRecommendation, allOptions };
     }
 }
 
+// Optimized function to get live data for a single instrument.
+async function getLiveInstrumentData(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey: string; spotPrice: number; vix: number, delta: number} | null> {
+    
+    // Construct the instrument key based on a predictable format.
+    // Note: This format might need adjustments for different symbols or expiry conventions.
+    const date = new Date(expiry);
+    const year = date.getFullYear().toString().substring(2);
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const day = date.getDate().toString().padStart(2, '0');
+    // A more standard format: NIFTY2460522500CE - NIFTY<YY><MON><DD><STRIKE><TYPE>
+    const instrumentKey = `NSE_FO|NIFTY${year}${month}${day}${strike}${type.substring(0,1)}`;
 
-// A helper to find the corresponding instrument key from the analysis data
-async function getLiveInstrumentData(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string; spotPrice?: number; vix?: number, delta?: number}> {
-    const instrumentKey = `NSE_FO|NIFTY${expiry.substring(2,4)}${new Date(expiry).toLocaleString('default', { month: 'short' }).toUpperCase()}${strike}${type.substring(0,1)}E`;
 
     try {
+        const underlyingResponse = await UpstoxAPI.getMarketQuote(token, 'NSE_INDEX|Nifty 50');
+        const underlying = underlyingResponse?.data?.['NSE_INDEX|Nifty 50'];
+
+        if (!underlying?.last_price) {
+             throw new Error("Could not fetch underlying spot price.");
+        }
+
         const quoteResponse = await UpstoxAPI.getMarketQuote(token, instrumentKey);
         const quote = quoteResponse?.data?.[instrumentKey];
-        if (quote) {
-             const underlyingResponse = await UpstoxAPI.getMarketQuote(token, 'NSE_INDEX|Nifty 50');
-             const underlying = underlyingResponse?.data?.['NSE_INDEX|Nifty 50'];
-
+        
+        if (quote && quote.option_greeks?.delta) {
              return {
-                 instrumentKey,
-                 spotPrice: underlying?.last_price,
-                 vix: underlying?.vix,
-                 delta: quote.option_greeks?.delta
+                 instrumentKey: quote.instrument_key,
+                 spotPrice: underlying.last_price,
+                 vix: underlying.vix,
+                 delta: quote.option_greeks.delta
              };
+        } else {
+            // Fallback if the constructed key is wrong or data is missing
+            console.warn(`Could not find delta for constructed key ${instrumentKey}, falling back to full chain scan.`);
+             const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
+             const target = optionChain.data?.find((o: any) => o.strike_price === strike);
+             const optionData = type === 'CE' ? target?.call_options : target?.put_options;
+             
+             if(optionData?.instrument_key && optionData?.option_greeks?.delta) {
+                return {
+                    instrumentKey: optionData.instrument_key,
+                    spotPrice: underlying.last_price,
+                    vix: underlying.vix,
+                    delta: optionData.option_greeks.delta
+                }
+             }
         }
     } catch(e) {
         console.error(`Could not fetch live instrument data for ${instrumentKey}:`, e);
     }
     
-    return {};
+    return null;
 }
 
 async function getLivePriceAndDelta(token: string | null | undefined, instrumentKey: string): Promise<{ ltp: number | null; delta: number | null }> {
@@ -691,7 +704,7 @@ export async function getBotResponse(message: string, token: string | null | und
             return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**'), portfolio };
             
         case '/reset':
-            return { type: 'reset', message: 'Portfolio has been reset successfully.', portfolio: { positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0, winningTrades: 0, totalTrades: 0, tradeHistory: [] }};
+            return { type: 'reset', message: 'Portfolio has been reset successfully.', portfolio: { positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0, winningTrades: 0, totalTrades: 0, tradeHistory: [], analysisCache: null }};
 
         case '/paper':
             if (!isMarketOpen()) {
@@ -703,6 +716,7 @@ export async function getBotResponse(message: string, token: string | null | und
                 const strike = parseInt(strikeStr, 10);
                 const quantity = parseInt(qtyStr);
                 const price = parseFloat(priceStr);
+                const upperCaseType = type.toUpperCase() as 'CE' | 'PE';
 
                 if (isNaN(strike) || isNaN(quantity) || isNaN(price)) {
                      return { type: 'error', message: `Invalid number format in trade command.`, portfolio };
@@ -711,14 +725,25 @@ export async function getBotResponse(message: string, token: string | null | und
                 if (!portfolio.lastActiveExpiry) {
                    return { type: 'error', message: `Please run an analysis for an expiry date first before placing a trade.`, portfolio };
                 }
-                
-                const { instrumentKey, spotPrice, delta } = await getLiveInstrumentData(token, portfolio.lastActiveExpiry, strike, type.toUpperCase() as 'CE' | 'PE');
 
-                if (!instrumentKey || !spotPrice) {
-                    return { type: 'error', message: `Could not find instrument key or spot price for ${type.toUpperCase()} ${strike}. Cannot place trade. Please ensure the strike exists for the selected expiry.`, portfolio };
+                // Use the cached analysis data to find the instrument
+                const cachedAnalysis = portfolio.analysisCache as (OptionData & {type: 'CE' | 'PE'})[];
+                if (!cachedAnalysis) {
+                    return { type: 'error', message: `Analysis data is missing. Please run an analysis again.`, portfolio };
+                }
+                
+                const instrumentData = cachedAnalysis.find(o => o.strike === strike && o.type === upperCaseType);
+
+                if (!instrumentData) {
+                     return { type: 'error', message: `Could not find instrument for ${upperCaseType} ${strike} in the last analysis. Please run analysis again.`, portfolio };
                 }
                 
                 const premium = price * quantity * config.NIFTY_LOT_SIZE;
+                const spotPrice = (await UpstoxAPI.getMarketQuote(token, 'NSE_INDEX|Nifty 50'))?.data?.['NSE_INDEX|Nifty 50']?.last_price || 0;
+                if(spotPrice === 0) {
+                     return { type: 'error', message: `Could not fetch current spot price to calculate margin.`, portfolio };
+                }
+
                 const marginRequired = calculateMargin(spotPrice, premium);
                 const availableFunds = portfolio.initialFunds + portfolio.realizedPnL - portfolio.blockedMargin;
                 
@@ -731,17 +756,17 @@ export async function getBotResponse(message: string, token: string | null | und
 
                 const newPosition: Position = {
                     id: portfolio.positions.length + portfolio.tradeHistory.length > 0 ? Math.max(0, ...portfolio.positions.map(p => p.id), ...portfolio.tradeHistory.map(t => t.id)) + 1 : 1,
-                    type: type.toUpperCase() as 'CE' | 'PE',
+                    type: upperCaseType,
                     strike: strike,
                     action: action.toUpperCase() as 'BUY' | 'SELL',
                     quantity: quantity,
                     entryPrice: price,
                     expiry: portfolio.lastActiveExpiry,
                     entryTimestamp: new Date().toISOString(),
-                    instrumentKey,
+                    instrumentKey: instrumentData.instrumentKey,
                     marginBlocked: marginRequired,
                     stopLoss: stopLoss,
-                    entryDelta: delta,
+                    entryDelta: instrumentData.delta,
                 };
 
                 const updatedPortfolio = { 
@@ -893,9 +918,9 @@ export async function getBotResponse(message: string, token: string | null | und
             if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
                 return { type: 'error', message: `No option chain data found for ${expiry}.`, accessToken: token ?? undefined, portfolio };
             }
-
-            const spotPrice = optionChain.data[0]?.underlying_spot_price ?? 0;
-            const vix = optionChain.data[0]?.vix;
+            
+            const spotPrice = optionChain.data[0]?.market_data?.ltp ?? (await UpstoxAPI.getMarketQuote(token, 'NSE_INDEX|Nifty 50'))?.data?.['NSE_INDEX|Nifty 50']?.last_price ?? 0;
+            const vix = optionChain.data[0]?.market_data?.vix?.value;
             const expDate = new Date(expiry);
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -903,11 +928,11 @@ export async function getBotResponse(message: string, token: string | null | und
             
             const marketAnalysis = MarketAnalyzer.analyzePcr(optionChain, expiry);
             const maxPain = MarketAnalyzer.calculateMaxPain(optionChain.data);
-            const { topOpportunities, qualifiedStrikes, tradeRecommendation } = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis, expiry);
+            const { topOpportunities, qualifiedStrikes, tradeRecommendation, allOptions } = MarketAnalyzer.findOpportunities(optionChain.data, spotPrice, dte, marketAnalysis, expiry);
             
             const timestamp = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
             
-            const updatedPortfolio = { ...portfolio, lastActiveExpiry: expiry };
+            const updatedPortfolio = { ...portfolio, lastActiveExpiry: expiry, analysisCache: allOptions };
 
             return {
                 type: 'analysis',

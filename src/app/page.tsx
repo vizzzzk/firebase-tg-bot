@@ -72,7 +72,7 @@ export default function Home() {
                     setDisplayName(userData.displayName);
                 }
             }
-            // If userData is null, the initial state is kept, no error shown to user.
+            // If userData is null (e.g., new user), the initial state is kept.
         } else {
             console.error("Failed to fetch user data:", response.error);
             const isServiceAccountError = typeof response.error === 'string' && response.error.includes("FIREBASE_SERVICE_ACCOUNT_KEY");
