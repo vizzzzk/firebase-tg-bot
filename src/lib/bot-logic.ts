@@ -1,5 +1,4 @@
 
-
 'use server';
 
 import { z } from 'zod';
@@ -9,7 +8,7 @@ const config = {
     UPSTOX_API_KEY: process.env.UPSTOX_API_KEY || "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: process.env.UPSTOX_API_SECRET || "3yn8j0huzj",
     UPSTOX_REDIRECT_URI: "https://localhost.com",
-    NIFTY_LOT_SIZE: 25,
+    NIFTY_LOT_SIZE: 25, // Corrected Lot Size
     BROKERAGE_PER_LOT: 20, // Flat fee per lot per side (buy/sell)
     STT_CTT_CHARGE: 0.000625, // 0.0625% on sell side (premium)
     TRANSACTION_CHARGE: 0.00053, // 0.053% on premium
@@ -222,7 +221,7 @@ class UpstoxAPI {
 
     static async getExpiries(accessToken: string | null | undefined): Promise<Expiry[]> {
         const headers = this.getHeaders(accessToken);
-        const url = "https://api.upstox.com/v2/option/contract?instrument_key=NSE_INDEX|Nifty%2050";
+        const url = "https://api-v2.upstox.com/v2/option/contract?instrument_key=NSE_INDEX|Nifty%2050";
         try {
             const response = await fetch(url, { headers });
             if (!response.ok) {
@@ -250,7 +249,7 @@ class UpstoxAPI {
                     const year = expDate.getFullYear();
                     const month = expDate.getMonth();
                     const lastDayOfMonth = new Date(year, month + 1, 0);
-                    let lastThursday = lastDayOfMonth;
+                    let lastThursday = new Date(lastDayOfMonth.getTime());
                     while (lastThursday.getDay() !== 4) { // 4 = Thursday
                         lastThursday.setDate(lastThursday.getDate() - 1);
                     }
@@ -271,7 +270,7 @@ class UpstoxAPI {
 
     static async getOptionChain(accessToken: string | null | undefined, expiryDate: string): Promise<any> {
         const headers = this.getHeaders(accessToken);
-        const url = `https://api-v2.option/chain?instrument_key=NSE_INDEX|Nifty%2050&expiry_date=${expiryDate}`;
+        const url = `https://api-v2.upstox.com/v2/option/chain?instrument_key=NSE_INDEX|Nifty%2050&expiry_date=${expiryDate}`;
         try {
             const response = await fetch(url, { headers });
             if (!response.ok) {
@@ -550,7 +549,7 @@ export async function getBotResponse(message: string, token: string | null | und
     // Command whitelist
     const allowedCommands = ['start', 'auth', 'help', '/portfolio', '/close', '/reset', '/journal'];
     const isExplicitCommand = allowedCommands.includes(mainCommand) || mainCommand.startsWith('exp:') || mainCommand.startsWith('/paper') || mainCommand.startsWith('/close');
-    const isAuthCode = /^[a-zA-Z0-9]{6,50}$/.test(command) && !isExplicitCommand;
+    const isAuthCode = /^[a-zA-Z0-9\-_]{6,50}$/.test(command) && !isExplicitCommand;
 
 
     if (isAuthCode) {
@@ -649,7 +648,7 @@ export async function getBotResponse(message: string, token: string | null | und
                 const costs = calculateCosts(price, quantity, action.toUpperCase() as 'BUY'|'SELL');
 
                 const newPosition: Position = {
-                    id: portfolio.positions.length + portfolio.tradeHistory.length > 0 ? Math.max(...portfolio.positions.map(p => p.id), ...portfolio.tradeHistory.map(t => t.id)) + 1 : 1,
+                    id: portfolio.positions.length + portfolio.tradeHistory.length > 0 ? Math.max(0, ...portfolio.positions.map(p => p.id), ...portfolio.tradeHistory.map(t => t.id)) + 1 : 1,
                     type: type.toUpperCase() as 'CE' | 'PE',
                     strike: strike,
                     action: action.toUpperCase() as 'BUY' | 'SELL',
@@ -851,7 +850,3 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }
-
-    
-
-    

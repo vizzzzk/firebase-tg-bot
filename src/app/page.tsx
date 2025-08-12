@@ -247,9 +247,9 @@ export default function Home() {
       trade.action,
       trade.quantity,
       trade.entryPrice,
-      trade.exitPrice,
+      trade.exitPrice ?? 'N/A',
       new Date(trade.entryTimestamp).toLocaleString(),
-      new Date(trade.exitTimestamp!).toLocaleString(),
+      trade.exitTimestamp ? new Date(trade.exitTimestamp).toLocaleString() : 'N/A',
       trade.grossPnl,
       trade.netPnl,
       trade.totalCosts
@@ -325,7 +325,7 @@ export default function Home() {
                             <TableCell>{trade.action}</TableCell>
                             <TableCell>{trade.entryPrice.toFixed(2)} / {trade.exitPrice?.toFixed(2)}</TableCell>
                             <TableCell className={trade.netPnl >= 0 ? 'text-green-600' : 'text-red-600'}>{trade.netPnl.toFixed(2)}</TableCell>
-                            <TableCell>{new Date(trade.exitTimestamp!).toLocaleDateString()}</TableCell>
+                            <TableCell>{trade.exitTimestamp ? new Date(trade.exitTimestamp).toLocaleDateString() : 'N/A'}</TableCell>
                           </TableRow>
                         )) : (
                            <TableRow>
@@ -367,5 +367,3 @@ export default function Home() {
     </div>
   );
 }
-
-    
