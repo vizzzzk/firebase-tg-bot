@@ -8,7 +8,7 @@ const config = {
     UPSTOX_API_KEY: process.env.UPSTOX_API_KEY || "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: process.env.UPSTOX_API_SECRET || "3yn8j0huzj",
     UPSTOX_REDIRECT_URI: "https://localhost.com",
-    NIFTY_LOT_SIZE: 75,
+    NIFTY_LOT_SIZE: 50,
     BROKERAGE_PER_LOT: 20, // Flat fee per lot per side (buy/sell)
     STT_CTT_CHARGE: 0.000625, // 0.0625% on sell side (premium)
     TRANSACTION_CHARGE: 0.00053, // 0.053% on premium
@@ -286,6 +286,39 @@ class UpstoxAPI {
             throw error;
         }
     }
+
+    static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<any> {
+        const headers = this.getHeaders(accessToken);
+        const url = `https://api-v2.upstox.com/v2/market-quote/quotes?instrument_key=${instrumentKey}`;
+         try {
+            const response = await fetch(url, { headers });
+            if (!response.ok) {
+                throw new Error(`Upstox API error fetching quote: ${response.statusText}`);
+            }
+            return await response.json();
+        } catch (error: any) {
+            console.error(`Error fetching market quote for ${instrumentKey}:`, error);
+            throw error;
+        }
+    }
+
+    static async getMarketQuotes(accessToken: string | null | undefined, instrumentKeys: string[]): Promise<any> {
+        if (instrumentKeys.length === 0) {
+            return { data: {} };
+        }
+        const headers = this.getHeaders(accessToken);
+        const url = `https://api-v2.upstox.com/v2/market-quote/quotes?instrument_key=${instrumentKeys.join(',')}`;
+         try {
+            const response = await fetch(url, { headers });
+            if (!response.ok) {
+                throw new Error(`Upstox API error fetching quotes: ${response.statusText}`);
+            }
+            return await response.json();
+        } catch (error: any) {
+            console.error(`Error fetching market quotes:`, error);
+            throw error;
+        }
+    }
 }
 
 
@@ -507,6 +540,7 @@ class MarketAnalyzer {
 
 // A helper to find the corresponding instrument key from the analysis data
 async function findInstrumentAndOptionData(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string; spotPrice?: number; vix?: number, delta?: number}> {
+    // This is still slow, but we only call it once before a trade.
     const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
     if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
         console.error(`Could not get option chain for expiry ${expiry}`);
@@ -537,28 +571,19 @@ async function findInstrumentAndOptionData(token: string | null | undefined, exp
     return { instrumentKey, spotPrice, vix, delta };
 }
 
-async function getLivePriceAndDelta(token: string | null | undefined, position: Position): Promise<{ ltp: number | null; delta: number | null }> {
+async function getLivePriceAndDelta(token: string | null | undefined, instrumentKey: string): Promise<{ ltp: number | null; delta: number | null }> {
     try {
-        const optionChain = await UpstoxAPI.getOptionChain(token, position.expiry);
-        if (!optionChain || !optionChain.data) return { ltp: null, delta: null };
-
-        const strikeData = optionChain.data.find((d: any) => d.strike_price === position.strike);
-        if (!strikeData) return { ltp: null, delta: null };
-
-        if (position.type === 'CE' && strikeData.call_options) {
+        const quote = await UpstoxAPI.getMarketQuote(token, instrumentKey);
+        const instrumentData = quote?.data?.[instrumentKey];
+        if (instrumentData) {
             return {
-                ltp: strikeData.call_options.market_data?.ltp ?? null,
-                delta: strikeData.call_options.option_greeks?.delta ?? null
-            };
-        } else if (position.type === 'PE' && strikeData.put_options) {
-            return {
-                ltp: strikeData.put_options.market_data?.ltp ?? null,
-                delta: strikeData.put_options.option_greeks?.delta ?? null
+                ltp: instrumentData.last_price ?? null,
+                delta: instrumentData.option_greeks?.delta ?? null
             };
         }
         return { ltp: null, delta: null };
     } catch (error) {
-        console.error(`Error fetching live price for ${position.instrumentKey}:`, error);
+        console.error(`Error fetching live price for ${instrumentKey}:`, error);
         return { ltp: null, delta: null };
     }
 }
@@ -754,16 +779,17 @@ export async function getBotResponse(message: string, token: string | null | und
                  portfolioMessage += `- **Unrealized P&L:** Rs. 0.00\n`;
                  portfolioMessage += `- **Blocked Margin:** Rs. 0.00\n`;
             } else {
-                const ltpPromises = portfolio.positions.map(p => getLivePriceAndDelta(token, p));
-                const liveData = await Promise.all(ltpPromises);
+                const instrumentKeys = portfolio.positions.map(p => p.instrumentKey);
+                const liveData = await UpstoxAPI.getMarketQuotes(token, instrumentKeys);
 
-                portfolio.positions.forEach((pos, index) => {
-                    const { ltp } = liveData[index];
-                    const mtm = ltp !== null ? (pos.action === 'SELL' ? (pos.entryPrice - ltp) : (ltp - pos.entryPrice)) * pos.quantity * config.NIFTY_LOT_SIZE : 0;
+                portfolio.positions.forEach((pos) => {
+                    const quote = liveData?.data?.[pos.instrumentKey];
+                    const ltp = quote?.last_price;
+                    const mtm = ltp !== null && ltp !== undefined ? (pos.action === 'SELL' ? (pos.entryPrice - ltp) : (ltp - pos.entryPrice)) * pos.quantity * config.NIFTY_LOT_SIZE : 0;
                     unrealizedPnl += mtm;
                     portfolioMessage += `\n**Position #${pos.id}** (${pos.action} ${pos.quantity} lot)\n`;
                     portfolioMessage += `- **Option:** ${pos.type} ${pos.strike} | ${pos.expiry}\n`;
-                    portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **LTP:** Rs. ${ltp !== null ? ltp.toFixed(2) : 'N/A'}\n`;
+                    portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **LTP:** Rs. ${ltp !== null && ltp !== undefined ? ltp.toFixed(2) : 'N/A'}\n`;
                     portfolioMessage += `- **MTM:** Rs. ${mtm.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${mtm >= 0 ? '✅' : '⚠️'}\n`;
                     portfolioMessage += `- **Margin Blocked:** Rs. ${pos.marginBlocked.toLocaleString('en-IN')}\n`;
                     portfolioMessage += `*To close, type: /close ${pos.id}*`;
@@ -796,7 +822,7 @@ export async function getBotResponse(message: string, token: string | null | und
             }
             
             try {
-                const { ltp: exitPrice, delta: exitDelta } = await getLivePriceAndDelta(token, positionToClose);
+                const { ltp: exitPrice, delta: exitDelta } = await getLivePriceAndDelta(token, positionToClose.instrumentKey);
 
                 if(exitPrice === null) {
                     return { type: 'error', message: `Could not fetch a live exit price for ${positionToClose.type} ${positionToClose.strike}. The market might be closed or the instrument illiquid. Cannot close position automatically.`, portfolio };
@@ -903,7 +929,3 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }
-
-    
-
-    
