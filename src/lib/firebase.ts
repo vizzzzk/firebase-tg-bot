@@ -5,7 +5,6 @@ import { getFirestore } from 'firebase/firestore';
 
 // Your web app's Firebase configuration.
 // This is safe to expose on the client-side.
-// Hardcoded to prevent environment variable loading issues in production.
 const firebaseConfig = {
   apiKey: "AIzaSyAZLdJ8hWbH2iA6a-Y9kXyV7k_ZzI8sGcg",
   authDomain: "vizbot-af245.firebaseapp.com",

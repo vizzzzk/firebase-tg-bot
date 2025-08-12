@@ -156,6 +156,7 @@ export default function Home() {
 
   const handleLogout = async () => {
     await signOut(auth);
+    toast({ title: "Logged Out", description: "You have been successfully logged out." });
   };
   
   const resetPortfolio = () => {
