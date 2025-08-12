@@ -266,20 +266,22 @@ class UpstoxAPI {
         }
     }
     
-    static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<any> {
+    static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<number> {
         const headers = this.getHeaders(accessToken);
         const url = `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${instrumentKey}`;
         try {
             const response = await fetch(url, { headers });
              if (!response.ok) {
-                throw new Error(`Upstox LTP API error: ${response.statusText}`);
+                console.error(`Upstox LTP API error for ${instrumentKey}: ${response.statusText}`);
+                return 0; // Return 0 on API error
             }
             const data = await response.json();
-            return data.data[instrumentKey]?.last_price;
+            // Defensive coding: check if data and the nested properties exist
+            const ltp = data?.data?.[instrumentKey]?.last_price;
+            return typeof ltp === 'number' ? ltp : 0;
         } catch (error: any) {
             console.error(`Error fetching LTP for ${instrumentKey}:`, error);
-            // Don't throw here, allow fallback
-            return 0;
+            return 0; // Return 0 on any exception
         }
     }
 }
@@ -706,7 +708,7 @@ export async function getBotResponse(message: string, token: string | null | und
                 const exitPrice = await UpstoxAPI.getMarketQuote(token, positionToClose.instrumentKey);
 
                 if(exitPrice === 0) {
-                    return { type: 'error', message: `Could not fetch live price for ${positionToClose.type} ${positionToClose.strike}. Cannot close position.`, portfolio };
+                    return { type: 'error', message: `Could not fetch a live exit price for ${positionToClose.type} ${positionToClose.strike}. The market might be closed or the instrument illiquid. Cannot close position automatically.`, portfolio };
                 }
 
                 const entryCosts = calculateCosts(positionToClose.entryPrice, positionToClose.quantity, positionToClose.action);
