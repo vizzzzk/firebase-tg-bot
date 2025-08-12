@@ -13,39 +13,38 @@ interface UserData {
 }
 
 // Function to get user data from Firestore.
-// It is tolerant and returns null if the document doesn't exist or if an error occurs, instead of throwing.
-export async function getUserData(userId: string): Promise<UserData | null> {
-  if (!userId) return null;
+// It now returns a structured object to indicate success or failure.
+export async function getUserData(userId: string): Promise<{success: boolean, data?: UserData | null, error?: string}> {
+  if (!userId) return { success: true, data: null };
   try {
     const userDocRef = doc(db, 'users', userId);
     const docSnap = await getDoc(userDocRef);
 
     if (docSnap.exists()) {
-      return docSnap.data() as UserData;
+      return { success: true, data: docSnap.data() as UserData };
     } else {
       // It's normal for a new user's doc to not exist yet.
-      // The caller is responsible for handling this case (e.g., by using default data).
-      return null;
+      return { success: true, data: null };
     }
-  } catch (error) {
-    console.error('Error fetching user data from Firestore (likely a permissions issue):', error);
-    // Return null instead of throwing, allowing the frontend to use default data.
-    // This makes the app more resilient to backend configuration issues.
-    return null;
+  } catch (error: any) {
+    console.error('Error fetching user data from Firestore:', error);
+    // Return a structured error object instead of throwing.
+    return { success: false, error: error.message || 'Failed to fetch user data. Please check Firestore permissions.' };
   }
 }
 
 // Function to update or create user data in Firestore.
-// Uses set with merge:true to handle both creation and updates atomically.
-export async function updateUserData(userId: string, data: UserData): Promise<void> {
-   if (!userId) return;
+// It now returns a structured object to indicate success or failure.
+export async function updateUserData(userId: string, data: UserData): Promise<{success: boolean, error?: string}> {
+   if (!userId) return {success: true}; // Or return an error if userId is essential
   try {
     const userDocRef = doc(db, 'users', userId);
     // Use set with merge:true to create or update the document atomically.
-    // This is safer and more robust than checking for existence first.
     await setDoc(userDocRef, data, { merge: true });
-  } catch (error) {
+    return { success: true };
+  } catch (error: any) {
     console.error('Error updating user data in Firestore:', error);
-    // Avoid throwing to the client for background updates; just log the error.
+    // Return a structured error object.
+    return { success: false, error: error.message || 'Failed to update user data.' };
   }
 }

@@ -64,16 +64,27 @@ export default function Home() {
         setDisplayName(currentUser.displayName || '');
         
         // Asynchronously fetch user data without blocking the UI
-        getUserData(currentUser.uid).then(userData => {
-          if (userData) {
-            setAccessToken(userData.accessToken || null);
-            setPortfolio(userData.portfolio || initialPortfolio);
-            if(userData.displayName) {
-                setDisplayName(userData.displayName);
+        const response = await getUserData(currentUser.uid);
+        if (response.success) {
+            const userData = response.data;
+            if (userData) {
+                setAccessToken(userData.accessToken || null);
+                setPortfolio(userData.portfolio || initialPortfolio);
+                if(userData.displayName) {
+                    setDisplayName(userData.displayName);
+                }
             }
-          }
-          // If userData is null, the initial state is kept, no error shown to user.
-        });
+            // If userData is null, the initial state is kept, no error shown to user.
+        } else {
+            console.error("Failed to fetch user data:", response.error);
+            toast({
+                title: "Could not load profile",
+                description: "Using default data. Your saved portfolio might not be visible. Please check your connection or app permissions.",
+                variant: "destructive"
+            });
+            // Fallback to initial state
+            setPortfolio(initialPortfolio);
+        }
         
         // Set initial bot message if chat is empty
         const initialBotMessage: Message = {
