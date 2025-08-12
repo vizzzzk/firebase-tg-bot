@@ -268,7 +268,8 @@ class UpstoxAPI {
     
     static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<number> {
         const headers = this.getHeaders(accessToken);
-        const url = `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${instrumentKey}`;
+        const encodedInstrumentKey = encodeURIComponent(instrumentKey);
+        const url = `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${encodedInstrumentKey}`;
         try {
             const response = await fetch(url, { headers });
              if (!response.ok) {
