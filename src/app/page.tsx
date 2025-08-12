@@ -13,10 +13,10 @@ import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { app } from '@/lib/firebase';
+import { getApp } from '@/lib/firebase';
 import { getUserData, updateUserData } from './api/user-data/actions';
 
-const auth = getAuth(app);
+const auth = getAuth(getApp());
 
 const initialPortfolio: Portfolio = { 
     positions: [], 
