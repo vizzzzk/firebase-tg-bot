@@ -2,7 +2,7 @@
 "use server";
 
 import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import type { Portfolio } from '@/lib/bot-logic';
 
 interface UserData {
@@ -34,15 +34,8 @@ export async function updateUserData(userId: string, data: UserData): Promise<vo
    if (!userId) return;
   try {
     const userDocRef = doc(db, 'users', userId);
-    const docSnap = await getDoc(userDocRef);
-
-    if (docSnap.exists()) {
-      // Document exists, update it
-      await updateDoc(userDocRef, data);
-    } else {
-      // Document does not exist, create it
-      await setDoc(userDocRef, data, { merge: true });
-    }
+    // Use set with merge:true to create or update the document.
+    await setDoc(userDocRef, data, { merge: true });
   } catch (error) {
     console.error('Error updating user data in Firestore:', error);
     // Don't throw error to the client, just log it.

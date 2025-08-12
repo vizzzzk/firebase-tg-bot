@@ -61,14 +61,16 @@ export default function Home() {
             // New user, set initial state. Document will be created on first data update.
             setPortfolio(initialPortfolio);
             setAccessToken(null);
+            updateUserData(currentUser.uid, { portfolio: initialPortfolio, accessToken: null });
           }
            const initialBotMessage: Message = {
             id: crypto.randomUUID(),
             role: 'bot',
             content: "Hello! I am VizBot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
           };
-          setMessages([initialBotMessage]);
-
+          if (messages.length === 0) {
+            setMessages([initialBotMessage]);
+          }
         } catch (error) {
           console.error("Error fetching user data:", error);
           toast({ title: "Error", description: "Could not load your data.", variant: "destructive" });
@@ -113,14 +115,16 @@ export default function Home() {
         // onAuthStateChanged will handle setting the new user state
         toast({ title: "Success!", description: "Your account has been created and you are logged in." });
       } catch (error: any) {
-        const errorCode = error.code;
-        let message = "An unknown error occurred. Please try again.";
-        if (errorCode === 'auth/email-already-in-use') {
+        console.error("Sign up error:", error);
+        let message = `An unknown error occurred. Code: ${error.code}. Message: ${error.message}`;
+        if (error.code === 'auth/email-already-in-use') {
           message = "This email is already in use. Please sign in instead.";
-        } else if (errorCode === 'auth/invalid-email') {
+        } else if (error.code === 'auth/invalid-email') {
           message = "Please enter a valid email address.";
-        } else if (errorCode === 'auth/weak-password') {
+        } else if (error.code === 'auth/weak-password') {
           message = "The password is too weak.";
+        } else if (error.code === 'auth/operation-not-allowed') {
+            message = "Email/password sign-up is not enabled. Please contact support.";
         }
         toast({ title: "Sign Up Failed", description: message, variant: "destructive" });
       }
@@ -138,9 +142,9 @@ export default function Home() {
          // onAuthStateChanged will handle setting the new user state
         toast({ title: "Success!", description: "You are now logged in." });
       } catch (error: any) {
-         const errorCode = error.code;
-         let message = "An unknown error occurred.";
-         if (errorCode === 'auth/user-not-found' || errorCode === 'auth/wrong-password' || errorCode === 'auth/invalid-credential') {
+         console.error("Sign in error:", error);
+         let message = `An unknown error occurred. Code: ${error.code}.`;
+         if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
             message = "Invalid email or password. Please try again.";
          }
         toast({ title: "Sign In Failed", description: message, variant: "destructive" });
