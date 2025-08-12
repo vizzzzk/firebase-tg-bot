@@ -65,7 +65,7 @@ export default function Home() {
            const initialBotMessage: Message = {
             id: crypto.randomUUID(),
             role: 'bot',
-            content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
+            content: "Hello! I am VizBot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
           };
           setMessages([initialBotMessage]);
 
@@ -344,7 +344,7 @@ export default function Home() {
           <CardHeader>
             <div className="flex items-center justify-center gap-3 mb-4">
               <Bot className="w-10 h-10 text-primary" />
-              <CardTitle className="text-3xl font-bold font-headline">Welcome to Webot</CardTitle>
+              <CardTitle className="text-3xl font-bold font-headline">Welcome to VizBot</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
@@ -432,7 +432,7 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <Bot className="w-8 h-8 text-primary" />
               <div>
-                <CardTitle className="text-2xl font-bold font-headline">Webot</CardTitle>
+                <CardTitle className="text-2xl font-bold font-headline">VizBot</CardTitle>
                 <CardDescription>Professional NIFTY Options Analysis</CardDescription>
               </div>
             </div>
@@ -528,4 +528,3 @@ export default function Home() {
     </div>
   );
 }
-

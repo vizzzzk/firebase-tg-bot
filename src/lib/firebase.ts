@@ -1,4 +1,3 @@
-
 // Import the functions you need from the SDKs you need
 import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
@@ -8,13 +7,14 @@ import { getFirestore } from 'firebase/firestore';
 // This is safe to expose on the client-side.
 // Hardcoded to prevent environment variable loading issues in production.
 const firebaseConfig = {
-  apiKey: "AIzaSyCNVzTY9CXY7J_qWPxivPK-EkZgKUcK6Ic",
-  authDomain: "webot-scm5f.firebaseapp.com",
-  projectId: "webot-scm5f",
-  storageBucket: "webot-scm5f.appspot.com",
-  messagingSenderId: "634655886203",
-  appId: "1:634655886203:web:3313a4d57bce49d8ec8bde",
+  apiKey: "AIzaSyAZLdJ8hWbH2iA6a-Y9kXyV7k_ZzI8sGcg",
+  authDomain: "vizbot-af245.firebaseapp.com",
+  projectId: "vizbot-af245",
+  storageBucket: "vizbot-af245.appspot.com",
+  messagingSenderId: "338959929235",
+  appId: "1:338959929235:web:a07b461f568da4cbe96b99"
 };
+
 
 // Initialize Firebase for SSR
 let app: FirebaseApp;

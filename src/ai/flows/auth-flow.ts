@@ -6,4 +6,3 @@
  * flow handled by Firebase Authentication. The new server actions for this
  * are located in 'src/app/api/auth/actions.ts'.
  */
-

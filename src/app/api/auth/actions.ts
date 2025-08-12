@@ -12,4 +12,3 @@ export async function createCustomToken(uid: string): Promise<string> {
     const customToken = await adminAuth.createCustomToken(uid);
     return customToken;
 }
-
