@@ -66,7 +66,7 @@ export default function Home() {
            const initialBotMessage: Message = {
             id: crypto.randomUUID(),
             role: 'bot',
-            content: "Hello! I am VizBot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
+            content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
           };
           if (messages.length === 0) {
             setMessages([initialBotMessage]);
@@ -125,6 +125,8 @@ export default function Home() {
           message = "The password is too weak.";
         } else if (error.code === 'auth/operation-not-allowed') {
             message = "Email/password sign-up is not enabled. Please contact support.";
+        } else if (error.code === 'auth/api-key-not-valid') {
+            message = "The Firebase API Key is invalid. Please contact support.";
         }
         toast({ title: "Sign Up Failed", description: message, variant: "destructive" });
       }
@@ -146,7 +148,9 @@ export default function Home() {
          let message = `An unknown error occurred. Code: ${error.code}.`;
          if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
             message = "Invalid email or password. Please try again.";
-         }
+         } else if (error.code === 'auth/api-key-not-valid') {
+            message = "The Firebase API Key is invalid. Please contact support.";
+        }
         toast({ title: "Sign In Failed", description: message, variant: "destructive" });
       }
     });
@@ -343,7 +347,7 @@ export default function Home() {
           <CardHeader>
             <div className="flex items-center justify-center gap-3 mb-4">
               <Bot className="w-10 h-10 text-primary" />
-              <CardTitle className="text-3xl font-bold font-headline">Welcome to VizBot</CardTitle>
+              <CardTitle className="text-3xl font-bold font-headline">Welcome to Webot</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
@@ -431,7 +435,7 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <Bot className="w-8 h-8 text-primary" />
               <div>
-                <CardTitle className="text-2xl font-bold font-headline">VizBot</CardTitle>
+                <CardTitle className="text-2xl font-bold font-headline">Webot</CardTitle>
                 <CardDescription>Professional NIFTY Options Analysis</CardDescription>
               </div>
             </div>
