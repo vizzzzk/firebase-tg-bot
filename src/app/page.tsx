@@ -512,7 +512,7 @@ export default function Home() {
                         <Button variant="ghost" className="relative h-10 w-10 rounded-full">
                             <Avatar className="h-10 w-10">
                                 <AvatarImage src={user.photoURL ?? ''} alt={user.displayName ?? user.email ?? ''} />
-                                <AvatarFallback>{displayName?.[0].toUpperCase() || user.email?.[0].toUpperCase()}</AvatarFallback>
+                                <AvatarFallback>{(displayName?.[0] || user.email?.[0] || 'U').toUpperCase()}</AvatarFallback>
                             </Avatar>
                         </Button>
                     </DropdownMenuTrigger>
