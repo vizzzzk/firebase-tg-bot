@@ -1,3 +1,4 @@
+
 // Import the functions you need from the SDKs you need
 import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
@@ -5,6 +6,7 @@ import { getFirestore } from 'firebase/firestore';
 
 // Your web app's Firebase configuration.
 // This is safe to expose on the client-side.
+// Hardcoding these values to prevent build-time environment variable issues.
 const firebaseConfig = {
   apiKey: "AIzaSyAZLdJ8hWbH2iA6a-Y9kXyV7k_ZzI8sGcg",
   authDomain: "vizbot-af245.firebaseapp.com",
@@ -15,22 +17,8 @@ const firebaseConfig = {
 };
 
 
-// Initialize Firebase for SSR
-let app: FirebaseApp;
-
-// This function ensures we initialize the app only once.
-function getFirebaseApp() {
-    if (getApps().length > 0) {
-        return getApp();
-    }
-    
-    // The error was being thrown here. By removing the check,
-    // we allow Firebase to initialize with the runtime environment variables.
-    // The Firebase SDK has its own checks for missing keys.
-    return initializeApp(firebaseConfig);
-}
-
-app = getFirebaseApp();
+// Initialize Firebase for SSR and client-side, ensuring it only happens once.
+const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 const auth = getAuth(app);
 const db = getFirestore(app);
