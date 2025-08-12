@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
@@ -237,8 +236,8 @@ export default function Home() {
   const exportToCSV = (data: TradeHistoryItem[]) => {
     const headers = [
       'Trade ID', 'Instrument', 'Expiry', 'Action', 'Quantity (Lots)', 
-      'Entry Price', 'Exit Price', 'Entry Time', 'Exit Time', 
-      'Gross P&L', 'Net P&L', 'Total Costs'
+      'Entry Time', 'Exit Time', 'Entry Price', 'Exit Price', 'Entry Delta', 'Exit Delta',
+      'Gross P&L', 'Net P&L', 'Total Costs', 'Status'
     ];
     const rows = data.map(trade => [
       trade.id,
@@ -246,13 +245,16 @@ export default function Home() {
       trade.expiry,
       trade.action,
       trade.quantity,
-      trade.entryPrice,
-      trade.exitPrice ?? 'N/A',
       new Date(trade.entryTimestamp).toLocaleString(),
       trade.exitTimestamp ? new Date(trade.exitTimestamp).toLocaleString() : 'N/A',
-      trade.grossPnl,
-      trade.netPnl,
-      trade.totalCosts
+      trade.entryPrice,
+      trade.exitPrice ?? 'N/A',
+      trade.entryDelta?.toFixed(3) ?? 'N/A',
+      trade.exitDelta?.toFixed(3) ?? 'N/A',
+      trade.grossPnl.toFixed(2),
+      trade.netPnl.toFixed(2),
+      trade.totalCosts.toFixed(2),
+      trade.netPnl >= 0 ? 'Win' : 'Loss'
     ]);
 
     let csvContent = "data:text/csv;charset=utf-8," 
@@ -309,23 +311,23 @@ export default function Home() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>ID</TableHead>
                           <TableHead>Instrument</TableHead>
-                          <TableHead>Action</TableHead>
+                          <TableHead>Entry Date</TableHead>
                            <TableHead>Entry/Exit Price</TableHead>
+                           <TableHead>Entry/Exit Delta</TableHead>
                           <TableHead>Net P&L</TableHead>
-                          <TableHead>Closed At</TableHead>
+                          <TableHead>Status</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {portfolio.tradeHistory?.length > 0 ? portfolio.tradeHistory.map((trade) => (
                           <TableRow key={trade.id}>
-                            <TableCell>{trade.id}</TableCell>
                             <TableCell>{trade.strike} {trade.type}</TableCell>
-                            <TableCell>{trade.action}</TableCell>
-                            <TableCell>{trade.entryPrice.toFixed(2)} / {trade.exitPrice?.toFixed(2)}</TableCell>
+                            <TableCell>{new Date(trade.entryTimestamp).toLocaleDateString()}</TableCell>
+                            <TableCell>{trade.entryPrice.toFixed(2)} / {trade.exitPrice?.toFixed(2) ?? 'N/A'}</TableCell>
+                            <TableCell>{trade.entryDelta?.toFixed(3) ?? 'N/A'} / {trade.exitDelta?.toFixed(3) ?? 'N/A'}</TableCell>
                             <TableCell className={trade.netPnl >= 0 ? 'text-green-600' : 'text-red-600'}>{trade.netPnl.toFixed(2)}</TableCell>
-                            <TableCell>{trade.exitTimestamp ? new Date(trade.exitTimestamp).toLocaleDateString() : 'N/A'}</TableCell>
+                            <TableCell className={trade.netPnl >= 0 ? 'text-green-600' : 'text-red-600'}>{trade.netPnl >= 0 ? 'Win' : 'Loss'}</TableCell>
                           </TableRow>
                         )) : (
                            <TableRow>
