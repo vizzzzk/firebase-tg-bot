@@ -270,20 +270,37 @@ class UpstoxAPI {
         const headers = this.getHeaders(accessToken);
         const encodedInstrumentKey = encodeURIComponent(instrumentKey);
         const url = `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${encodedInstrumentKey}`;
+
         try {
             const response = await fetch(url, { headers });
-             if (!response.ok) {
+            if (!response.ok) {
                 console.error(`Upstox LTP API error for ${instrumentKey}: ${response.statusText}`);
-                return 0; // Return 0 on API error
+                const errorBody = await response.text();
+                console.error("Error Body:", errorBody);
+                return 0;
             }
+
             const data = await response.json();
-            // Defensive coding: check if data and the nested properties exist
-            // CRITICAL FIX: Use the original, un-encoded instrumentKey to parse the response.
-            const ltp = data?.data?.[instrumentKey]?.last_price;
-            return typeof ltp === 'number' ? ltp : 0;
+            if (!data || !data.data) {
+                console.error(`Invalid data structure received for ${instrumentKey}:`, data);
+                return 0;
+            }
+
+            // Robustly find the LTP by iterating through the keys in the response data object
+            for (const key in data.data) {
+                if (key.trim().toLowerCase() === instrumentKey.trim().toLowerCase()) {
+                    const ltp = data.data[key]?.last_price;
+                    return typeof ltp === 'number' ? ltp : 0;
+                }
+            }
+
+            console.error(`LTP not found for instrumentKey ${instrumentKey} in API response.`);
+            console.log('Available keys in response:', Object.keys(data.data));
+            return 0;
+            
         } catch (error: any) {
-            console.error(`Error fetching LTP for ${instrumentKey}:`, error);
-            return 0; // Return 0 on any exception
+            console.error(`Exception while fetching LTP for ${instrumentKey}:`, error);
+            return 0;
         }
     }
 }
@@ -798,5 +815,7 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }
+
+    
 
     
