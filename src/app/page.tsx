@@ -77,11 +77,15 @@ export default function Home() {
             // If userData is null, the initial state is kept, no error shown to user.
         } else {
             console.error("Failed to fetch user data:", response.error);
-            toast({
-                title: "Could not load profile",
-                description: "Using default data. Your saved portfolio might not be visible. Please check your connection or app permissions.",
-                variant: "destructive"
-            });
+            // Don't show an error toast if the client is simply offline during initial load.
+            const isOfflineError = typeof response.error === 'string' && response.error.includes("offline");
+            if (!isOfflineError) {
+              toast({
+                  title: "Could not load profile",
+                  description: "Using default data. Your saved portfolio might not be visible. Please check your connection or app permissions.",
+                  variant: "destructive"
+              });
+            }
             // Fallback to initial state
             setPortfolio(initialPortfolio);
         }
@@ -652,3 +656,5 @@ export default function Home() {
     </div>
   );
 }
+
+    
