@@ -556,8 +556,8 @@ class MarketAnalyzer {
 
 // A helper to find the corresponding instrument key from the analysis data
 async function getLiveInstrumentData(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string; spotPrice?: number; vix?: number, delta?: number}> {
-    const instrumentKey = `NSE_FO|NIFTY${expiry.substring(2,4)}${expiry.substring(5,7)}${expiry.substring(8,10)}${strike}${type.substring(0,1)}`;
-    
+    const instrumentKey = `NSE_FO|NIFTY${expiry.substring(2,4)}${new Date(expiry).toLocaleString('default', { month: 'short' }).toUpperCase()}${strike}${type.substring(0,1)}E`;
+
     try {
         const quoteResponse = await UpstoxAPI.getMarketQuote(token, instrumentKey);
         const quote = quoteResponse?.data?.[instrumentKey];
