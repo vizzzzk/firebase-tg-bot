@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen, LogIn, LogOut, Mail, KeySquare } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen, LogIn, LogOut, Mail, KeySquare, Eye, EyeOff, UserPlus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,10 +12,11 @@ import { sendMessage } from './actions';
 import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
-import { onAuthStateChanged, signOut, User as FirebaseUser, signInWithCustomToken } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User as FirebaseUser, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { getUserData, updateUserData } from './api/user-data/actions';
-import { requestOtp, verifyOtp } from './api/auth/actions';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+
 
 const initialPortfolio: Portfolio = { 
     positions: [], 
@@ -40,9 +41,8 @@ export default function Home() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [email, setEmail] = useState('');
-  const [otp, setOtp] = useState('');
-  const [isOtpSent, setIsOtpSent] = useState(false);
-  const [displayedOtp, setDisplayedOtp] = useState<string | null>(null);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isAuthPending, startAuthTransition] = useTransition();
 
 
@@ -82,9 +82,7 @@ export default function Home() {
         setAccessToken(null);
         // Reset auth flow state on logout
         setEmail('');
-        setOtp('');
-        setIsOtpSent(false);
-        setDisplayedOtp(null);
+        setPassword('');
       }
       setIsLoading(false);
     });
@@ -105,49 +103,57 @@ export default function Home() {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
-  
-  const handleRequestOtp = async () => {
+
+  const handleSignUp = async () => {
     startAuthTransition(async () => {
-      if (!email) {
-        toast({ title: "Email is required", variant: "destructive" });
+      if (!email || !password) {
+        toast({ title: "Email and password are required", variant: "destructive" });
+        return;
+      }
+      if (password.length < 6) {
+        toast({ title: "Password must be at least 6 characters long", variant: "destructive" });
         return;
       }
       try {
-        const result = await requestOtp(email);
-        if (result.success && result.otp) {
-          setIsOtpSent(true);
-          setDisplayedOtp(result.otp); // For development: display OTP
-          toast({ title: "OTP Sent", description: "Check your email (or the UI for dev) for the OTP." });
-        } else {
-          toast({ title: "Error", description: result.message, variant: "destructive" });
-        }
+        await createUserWithEmailAndPassword(auth, email, password);
+        // onAuthStateChanged will handle the rest
+        toast({ title: "Success!", description: "Your account has been created and you are logged in." });
       } catch (error: any) {
-        toast({ title: "Failed to request OTP", description: error.message, variant: "destructive" });
+        const errorCode = error.code;
+        let message = "An unknown error occurred.";
+        if (errorCode === 'auth/email-already-in-use') {
+          message = "This email is already in use. Please sign in instead.";
+        } else if (errorCode === 'auth/invalid-email') {
+          message = "Please enter a valid email address.";
+        } else if (errorCode === 'auth/weak-password') {
+          message = "The password is too weak.";
+        }
+        toast({ title: "Sign Up Failed", description: message, variant: "destructive" });
+      }
+    });
+  };
+  
+  const handleSignIn = async () => {
+    startAuthTransition(async () => {
+      if (!email || !password) {
+        toast({ title: "Email and password are required", variant: "destructive" });
+        return;
+      }
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+         // onAuthStateChanged will handle the rest
+        toast({ title: "Success!", description: "You are now logged in." });
+      } catch (error: any) {
+         const errorCode = error.code;
+         let message = "An unknown error occurred.";
+         if (errorCode === 'auth/user-not-found' || errorCode === 'auth/wrong-password' || errorCode === 'auth/invalid-credential') {
+            message = "Invalid email or password. Please try again.";
+         }
+        toast({ title: "Sign In Failed", description: message, variant: "destructive" });
       }
     });
   };
 
-  const handleVerifyOtp = async () => {
-    startAuthTransition(async () => {
-      if (!otp) {
-        toast({ title: "OTP is required", variant: "destructive" });
-        return;
-      }
-      try {
-        const result = await verifyOtp(email, otp);
-        if (result.success && result.customToken) {
-           await signInWithCustomToken(auth, result.customToken);
-           // The onAuthStateChanged listener will handle the rest
-           toast({ title: "Success!", description: "You are now logged in."});
-        } else {
-          toast({ title: "Login Failed", description: result.message || "An unknown error occurred.", variant: "destructive" });
-        }
-      } catch (error: any) {
-        toast({ title: "Failed to verify OTP", description: error.message, variant: "destructive" });
-      }
-    });
-  };
-  
   const handleLogout = async () => {
     await signOut(auth);
   };
@@ -160,7 +166,6 @@ export default function Home() {
       title: "Portfolio Reset",
       description: "Your paper trading portfolio has been cleared.",
     });
-    // This will now force a re-fetch of data from firestore on next action
   }
 
   const processAndSetMessages = (userInput: string, response: BotResponsePayload) => {
@@ -177,7 +182,6 @@ export default function Home() {
       payload: response,
     };
     
-    // If the response contains a new access token, store it.
     if (response.accessToken) {
         setAccessToken(response.accessToken);
     }
@@ -187,7 +191,6 @@ export default function Home() {
     }
 
     if (response.type === 'error') {
-        // For error messages, we display them directly. If there's an auth URL, we render it as a clickable link.
         if(response.authUrl) {
            botMessage.content = (
             <div>
@@ -210,8 +213,7 @@ export default function Home() {
         botMessage.content = response.message;
         botMessage.payload = undefined;
     } else if (response.type === 'reset') {
-       // Message is handled by the resetPortfolio function's toast
-       return; // Do not add any messages to chat for reset
+       return; 
     }
 
     setMessages(prev => [...prev, userMessage, botMessage]);
@@ -232,12 +234,10 @@ export default function Home() {
       role: 'user',
       content: trimmedInput,
     };
-    // Add user message optimistically to the chat
     setMessages(prev => [...prev, tempUserMessage]);
     setInput('');
     
     startTransition(async () => {
-      // Remove the optimistic user message to avoid duplication
       setMessages(prev => prev.slice(0, prev.length-1));
 
       const result = await sendMessage(trimmedInput, accessToken, portfolio);
@@ -257,7 +257,6 @@ export default function Home() {
   const handleCommandClick = (command: string) => {
       if (command.startsWith('/paper') || command.startsWith('/close')) {
           setInput(command);
-          // Focus the input field after setting the command
           const inputElement = document.querySelector('input[aria-label="Chat input"]');
           if (inputElement) {
             (inputElement as HTMLInputElement).focus();
@@ -347,56 +346,78 @@ export default function Home() {
               <Bot className="w-10 h-10 text-primary" />
               <CardTitle className="text-3xl font-bold font-headline">Welcome to Webot</CardTitle>
             </div>
-            <CardDescription className="text-center">
-              Sign in with your email to access your trading portfolio.
-            </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center space-y-4">
-            {!isOtpSent ? (
-              <div className="w-full space-y-4">
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input 
-                    type="email" 
-                    placeholder="Enter your email" 
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    disabled={isAuthPending}
-                    className="pl-10"
-                  />
-                </div>
-                <Button onClick={handleRequestOtp} disabled={isAuthPending || !email} className="w-full">
-                  {isAuthPending ? <Loader className="animate-spin" /> : <><LogIn className="mr-2" /><span>Send OTP</span></>}
-                </Button>
-              </div>
-            ) : (
-              <div className="w-full space-y-4">
-                <p className="text-sm text-center text-muted-foreground">An OTP has been sent to {email}.</p>
-                {displayedOtp && (
-                  <div className="p-3 bg-green-100 border border-green-400 text-green-800 rounded-md text-center">
-                    <p className="text-sm">For Development: Your OTP is</p>
-                    <p className="font-bold text-lg tracking-widest">{displayedOtp}</p>
+          <CardContent>
+             <Tabs defaultValue="signin" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="signin">Sign In</TabsTrigger>
+                <TabsTrigger value="signup">Sign Up</TabsTrigger>
+              </TabsList>
+              <TabsContent value="signin">
+                <div className="space-y-4 pt-4">
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input 
+                      type="email" 
+                      placeholder="Email" 
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      disabled={isAuthPending}
+                      className="pl-10"
+                    />
                   </div>
-                )}
-                 <div className="relative">
-                  <KeySquare className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input 
-                    type="text" 
-                    placeholder="Enter OTP" 
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value)}
-                    disabled={isAuthPending}
-                    className="pl-10"
-                  />
+                  <div className="relative">
+                    <KeySquare className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input 
+                      type={showPassword ? "text" : "password"} 
+                      placeholder="Password" 
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={isAuthPending}
+                      className="pl-10 pr-10"
+                    />
+                    <Button variant="ghost" size="icon" type="button" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                  <Button onClick={handleSignIn} disabled={isAuthPending || !email || !password} className="w-full">
+                    {isAuthPending ? <Loader className="animate-spin" /> : <><LogIn className="mr-2" /><span>Sign In</span></>}
+                  </Button>
                 </div>
-                <Button onClick={handleVerifyOtp} disabled={isAuthPending || !otp} className="w-full">
-                   {isAuthPending ? <Loader className="animate-spin" /> : <span>Verify OTP & Login</span>}
-                </Button>
-                 <Button variant="link" onClick={() => { setIsOtpSent(false); setOtp(''); setDisplayedOtp(null); }}>
-                  Use a different email
-                </Button>
-              </div>
-            )}
+              </TabsContent>
+              <TabsContent value="signup">
+                 <div className="space-y-4 pt-4">
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input 
+                      type="email" 
+                      placeholder="Email" 
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      disabled={isAuthPending}
+                      className="pl-10"
+                    />
+                  </div>
+                  <div className="relative">
+                    <KeySquare className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                    <Input 
+                       type={showPassword ? "text" : "password"}
+                      placeholder="Password (min. 6 characters)" 
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={isAuthPending}
+                      className="pl-10 pr-10"
+                    />
+                     <Button variant="ghost" size="icon" type="button" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                  <Button onClick={handleSignUp} disabled={isAuthPending || !email || !password} className="w-full">
+                    {isAuthPending ? <Loader className="animate-spin" /> : <><UserPlus className="mr-2" /><span>Sign Up</span></>}
+                  </Button>
+                </div>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
       </div>
@@ -507,4 +528,4 @@ export default function Home() {
     </div>
   );
 }
-    
+
