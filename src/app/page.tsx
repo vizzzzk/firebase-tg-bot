@@ -75,9 +75,15 @@ export default function Home() {
             // If userData is null, the initial state is kept, no error shown to user.
         } else {
             console.error("Failed to fetch user data:", response.error);
-            // Don't show an error toast if the client is simply offline during initial load.
-            const isOfflineError = typeof response.error === 'string' && response.error.includes("offline");
-            if (!isOfflineError) {
+            const isServiceAccountError = typeof response.error === 'string' && response.error.includes("FIREBASE_SERVICE_ACCOUNT_KEY");
+            if (isServiceAccountError) {
+              toast({
+                  title: "Project Configuration Error",
+                  description: "The Firebase Admin SDK is not configured. Please set the FIREBASE_SERVICE_ACCOUNT_KEY secret in your hosting environment.",
+                  variant: "destructive",
+                  duration: 10000
+              });
+            } else {
               toast({
                   title: "Could not load profile",
                   description: "Using default data. Your saved portfolio might not be visible. Please check your connection or app permissions.",

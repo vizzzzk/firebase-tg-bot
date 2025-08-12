@@ -31,7 +31,7 @@ export async function getUserData(userId: string): Promise<{success: boolean, da
   } catch (error: any) {
     console.error('Error fetching user data from Firestore:', error);
     // Return a structured error object instead of throwing.
-    return { success: false, error: error.message || 'Failed to fetch user data. Please check Firestore permissions.' };
+    return { success: false, error: error.message || 'Failed to fetch user data.' };
   }
 }
 
