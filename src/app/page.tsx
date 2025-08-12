@@ -98,12 +98,6 @@ export default function Home() {
   }, [accessToken, portfolio, user, isLoading]);
 
 
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    }
-  }, [messages]);
-
   const handleSignUp = async () => {
     startAuthTransition(async () => {
       if (!email || !password) {
@@ -529,5 +523,3 @@ export default function Home() {
     </div>
   );
 }
-
-    
