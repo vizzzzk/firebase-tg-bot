@@ -250,7 +250,7 @@ export default function Home() {
               <Button variant="outline" size="sm" onClick={handlePaperTrade} disabled={isPending}><Newspaper /> Paper Trade</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('/portfolio')} disabled={isPending}><Briefcase /> Portfolio</Button>
               <Button variant="outline" size="sm" onClick={() => setInput('/close ')} disabled={isPending}><XCircle /> Close</Button>
-               <Button variant="outline" size="sm" onClick={() => handleCommandClick('/reset')} disabled={isPending}><RefreshCw /> Reset</Button>
+               <Button variant="outline" size="sm" onClick={resetPortfolio} disabled={isPending}><RefreshCw /> Reset</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
           </div>
           <form onSubmit={handleSubmit} className="flex items-center gap-3">

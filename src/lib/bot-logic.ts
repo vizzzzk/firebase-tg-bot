@@ -269,7 +269,6 @@ class UpstoxAPI {
     static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<number> {
         const headers = this.getHeaders(accessToken);
         const encodedInstrumentKey = encodeURIComponent(instrumentKey);
-        // Using OHLC endpoint as it's more reliable for F&O
         const url = `https://api.upstox.com/v2/market-quote/ohlc?instrument_key=${encodedInstrumentKey}&interval=1d`;
     
         try {
@@ -281,13 +280,19 @@ class UpstoxAPI {
             }
     
             const data = await response.json();
+            
             if (!data || !data.data || !data.data[instrumentKey]) {
-                console.error(`Invalid data structure received from OHLC API for ${instrumentKey}:`, data);
+                console.error(`Invalid data structure or key not found in OHLC response for ${instrumentKey}:`, data);
                 return 0;
             }
     
-            // The close price from the daily OHLC is the most recent LTP.
-            const closePrice = data.data[instrumentKey]?.ohlc_details?.close_price;
+            const ohlcDetails = data.data[instrumentKey]?.ohlc_details;
+            if (!ohlcDetails) {
+                 console.error(`OHLC details missing in response for ${instrumentKey}:`, data);
+                 return 0;
+            }
+            
+            const closePrice = ohlcDetails.close_price;
             return typeof closePrice === 'number' ? closePrice : 0;
     
         } catch (error: any) {
@@ -494,7 +499,7 @@ async function findInstrumentAndSpot(token: string | null | undefined, expiry: s
     const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
     if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
         console.error(`Could not get option chain for expiry ${expiry}`);
-        return { instrumentKey: undefined, spotPrice: undefined };
+        return { instrumentKey: undefined, spotPrice: undefined, vix: undefined };
     }
     const spotPrice = optionChain.data[0]?.underlying_spot_price;
     const vix = optionChain.data[0]?.vix;
@@ -606,9 +611,13 @@ export async function getBotResponse(message: string, token: string | null | und
 
             if (parts.length === 6) {
                 const [_, type, strikeStr, action, qtyStr, priceStr] = parts;
-                const strike = parseFloat(strikeStr);
+                const strike = parseInt(strikeStr, 10); // FIX: Ensure strike is an integer
                 const quantity = parseInt(qtyStr);
                 const price = parseFloat(priceStr);
+
+                if (isNaN(strike) || isNaN(quantity) || isNaN(price)) {
+                     return { type: 'error', message: `Invalid number format in trade command.`, portfolio };
+                }
 
                 if (!portfolio.lastActiveExpiry) {
                    return { type: 'error', message: `Please run an analysis for an expiry date first before placing a trade.`, portfolio };
@@ -617,7 +626,7 @@ export async function getBotResponse(message: string, token: string | null | und
                 const { instrumentKey, spotPrice } = await findInstrumentAndSpot(token, portfolio.lastActiveExpiry, strike, type.toUpperCase() as 'CE' | 'PE');
 
                 if (!instrumentKey || !spotPrice) {
-                    return { type: 'error', message: `Could not find instrument key or spot price for ${type.toUpperCase()} ${strike}. Cannot place trade.`, portfolio };
+                    return { type: 'error', message: `Could not find instrument key or spot price for ${type.toUpperCase()} ${strike}. Cannot place trade. Please ensure the strike exists for the selected expiry.`, portfolio };
                 }
                 
                 const premium = price * quantity * config.NIFTY_LOT_SIZE;
@@ -655,7 +664,7 @@ export async function getBotResponse(message: string, token: string | null | und
 
 - **Trade ID:** ${newPosition.id}
 - **Position:** ${newPosition.action} ${newPosition.quantity} lot(s) (${newPosition.quantity * config.NIFTY_LOT_SIZE} units)
-- **Option:** ${newPosition.type} ${newPosition.strike.toFixed(1)} @ Rs. ${newPosition.entryPrice.toFixed(2)}
+- **Option:** ${newPosition.type} ${newPosition.strike} @ Rs. ${newPosition.entryPrice.toFixed(2)}
 - **Stop-Loss:** Set at Rs. ${newPosition.stopLoss.toFixed(2)}
 - **Est. Margin Blocked:** Rs. ${marginRequired.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 - **Est. Costs (Entry):** Rs. ${costs.total.toFixed(2)}
@@ -694,7 +703,7 @@ export async function getBotResponse(message: string, token: string | null | und
                     const mtm = currentLtp > 0 ? (pos.action === 'SELL' ? (pos.entryPrice - currentLtp) : (currentLtp - pos.entryPrice)) * pos.quantity * config.NIFTY_LOT_SIZE : 0;
                     unrealizedPnl += mtm;
                     portfolioMessage += `\n**Position #${pos.id}** (${pos.action} ${pos.quantity} lot)\n`;
-                    portfolioMessage += `- **Option:** ${pos.type} ${pos.strike.toFixed(1)} | ${pos.expiry}\n`;
+                    portfolioMessage += `- **Option:** ${pos.type} ${pos.strike} | ${pos.expiry}\n`;
                     portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **LTP:** Rs. ${currentLtp > 0 ? currentLtp.toFixed(2) : 'N/A'}\n`;
                     portfolioMessage += `- **MTM:** Rs. ${mtm.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${mtm >= 0 ? '✅' : '⚠️'}\n`;
                     portfolioMessage += `- **Margin Blocked:** Rs. ${pos.marginBlocked.toLocaleString('en-IN')}\n`;
@@ -823,3 +832,4 @@ export async function getBotResponse(message: string, token: string | null | und
     
 
     
+
