@@ -8,12 +8,11 @@ import { getAuth, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { app } from '@/lib/firebase';
 
-initAdminApp();
-const db = getFirestore();
-
 
 export async function requestOtp(email: string) {
   try {
+    initAdminApp();
+    const db = getFirestore();
     // 1. Call the flow to generate an OTP
     const flowResult = await requestOtpFlow({ email });
 
@@ -49,6 +48,8 @@ export async function requestOtp(email: string) {
 
 export async function verifyOtp(email: string, otp: string): Promise<{ success: boolean; message: string; customToken?: string }> {
   try {
+     initAdminApp();
+     const db = getFirestore();
      // 1. Verify the OTP against Firestore
     const otpRef = db.collection('otps').doc(email);
     const otpDoc = await otpRef.get();
