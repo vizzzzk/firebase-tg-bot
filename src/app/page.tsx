@@ -123,10 +123,10 @@ export default function Home() {
           message = "Please enter a valid email address.";
         } else if (error.code === 'auth/weak-password') {
           message = "The password is too weak.";
-        } else if (error.code === 'auth/operation-not-allowed') {
-            message = "Email/password sign-up is not enabled. Please contact support.";
+        } else if (error.code === 'auth/operation-not-allowed' || error.code === 'auth/configuration-not-found') {
+            message = "Email/password sign-up is not enabled in the Firebase project. Please enable it in the Firebase console.";
         } else if (error.code === 'auth/api-key-not-valid') {
-            message = "The Firebase API Key is invalid. Please contact support.";
+            message = "The Firebase API Key is invalid. Please ensure it is correct in your project configuration.";
         }
         toast({ title: "Sign Up Failed", description: message, variant: "destructive" });
       }
@@ -149,7 +149,9 @@ export default function Home() {
          if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
             message = "Invalid email or password. Please try again.";
          } else if (error.code === 'auth/api-key-not-valid') {
-            message = "The Firebase API Key is invalid. Please contact support.";
+            message = "The Firebase API Key is invalid. Please ensure it is correct in your project configuration.";
+        } else if (error.code === 'auth/operation-not-allowed' || error.code === 'auth/configuration-not-found') {
+            message = "Email/password sign-in is not enabled in the Firebase project. Please enable it in the Firebase console.";
         }
         toast({ title: "Sign In Failed", description: message, variant: "destructive" });
       }
