@@ -100,7 +100,7 @@ const AnalysisCard = ({ analysis, onCommandClick }: { analysis: AnalysisPayload,
                                  const command = `/paper CE ${s.strike} SELL 1 ${s.ltp.toFixed(2)}`;
                                  return (
                                      <p key={s.strike} onClick={() => onCommandClick(command)} className="cursor-pointer hover:text-primary">
-                                        {idx + 1}. {s.strike}: Δ={s.delta.toFixed(3)}, IV={(s.iv).toFixed(2)}%, LTP={s.ltp.toFixed(2)}, PoP={s.pop.toFixed(1)}%, Liq: {s.liquidity.grade}
+                                        {idx + 1}. {s.strike}: Δ={s.delta.toFixed(3)}, IV={(s.iv * 100).toFixed(2)}%, LTP={s.ltp.toFixed(2)}, PoP={s.pop.toFixed(1)}%, Liq: {s.liquidity.grade}
                                         <br/><span className="font-mono text-primary/80">{command}</span>
                                      </p>
                                  )
@@ -114,7 +114,7 @@ const AnalysisCard = ({ analysis, onCommandClick }: { analysis: AnalysisPayload,
                                 const command = `/paper PE ${s.strike} SELL 1 ${s.ltp.toFixed(2)}`;
                                 return (
                                      <p key={s.strike} onClick={() => onCommandClick(command)} className="cursor-pointer hover:text-primary">
-                                        {idx + 1}. {s.strike}: Δ={s.delta.toFixed(3)}, IV={(s.iv).toFixed(2)}%, LTP={s.ltp.toFixed(2)}, PoP={s.pop.toFixed(1)}%, Liq: {s.liquidity.grade}
+                                        {idx + 1}. {s.strike}: Δ={s.delta.toFixed(3)}, IV={(s.iv * 100).toFixed(2)}%, LTP={s.ltp.toFixed(2)}, PoP={s.pop.toFixed(1)}%, Liq: {s.liquidity.grade}
                                         <br/><span className="font-mono text-primary/80">{command}</span>
                                     </p>
                                 )
@@ -137,7 +137,7 @@ const OpportunityCard = ({ opportunity, onCommandClick }: { opportunity: Opportu
             <CardContent className="text-xs space-y-1 p-3 pt-0">
                 <p><strong>LTP:</strong> {opportunity.ltp.toFixed(2)} | <strong>PoP:</strong> {opportunity.pop.toFixed(1)}%</p>
                 <p><strong>Delta:</strong> {opportunity.delta.toFixed(3)} (Score: {opportunity.score_breakdown.deltaScore.toFixed(1)}/10)</p>
-                <p><strong>IV:</strong> {(opportunity.iv).toFixed(2)}% (Score: {opportunity.score_breakdown.ivScore.toFixed(1)}/10)</p>
+                <p><strong>IV:</strong> {(opportunity.iv * 100).toFixed(2)}% (Score: {opportunity.score_breakdown.ivScore.toFixed(1)}/10)</p>
                 <p><strong>Liquidity:</strong> {opportunity.liquidity.grade} (Score: {opportunity.score_breakdown.liquidityScore.toFixed(1)}/20)</p>
                 <p><strong>Alignment Bonus:</strong> {opportunity.score_breakdown.alignmentBonus}</p>
                 <p className="font-mono text-primary/80 mt-1 cursor-pointer hover:text-primary" onClick={() => onCommandClick(command)}>{command}</p>

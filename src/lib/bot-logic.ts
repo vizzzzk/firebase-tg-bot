@@ -269,34 +269,28 @@ class UpstoxAPI {
     static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<number> {
         const headers = this.getHeaders(accessToken);
         const encodedInstrumentKey = encodeURIComponent(instrumentKey);
-        const url = `https://api.upstox.com/v2/market-quote/ohlc?instrument_key=${encodedInstrumentKey}&interval=1d`;
-    
+        const url = `https://api-v2.upstox.com/v2/market-quote/quotes?instrument_key=${encodedInstrumentKey}`;
+
         try {
             const response = await fetch(url, { headers });
             if (!response.ok) {
                 const errorBody = await response.text();
-                console.error(`Upstox OHLC API error for ${instrumentKey}: ${response.status} ${response.statusText}`, errorBody);
+                console.error(`Upstox Market Quote API error for ${instrumentKey}: ${response.status} ${response.statusText}`, errorBody);
                 return 0;
             }
     
             const data = await response.json();
-            
+
             if (!data || !data.data || !data.data[instrumentKey]) {
-                console.error(`Invalid data structure or key not found in OHLC response for ${instrumentKey}:`, data);
+                console.error(`LTP not found in market quote response for ${instrumentKey}:`, data);
                 return 0;
             }
     
-            const ohlcDetails = data.data[instrumentKey]?.ohlc_details;
-            if (!ohlcDetails) {
-                 console.error(`OHLC details missing in response for ${instrumentKey}:`, data);
-                 return 0;
-            }
-            
-            const closePrice = ohlcDetails.close_price;
-            return typeof closePrice === 'number' ? closePrice : 0;
+            const ltp = data.data[instrumentKey]?.last_price;
+            return typeof ltp === 'number' ? ltp : 0;
     
         } catch (error: any) {
-            console.error(`Exception while fetching OHLC for ${instrumentKey}:`, error);
+            console.error(`Exception while fetching Market Quote for ${instrumentKey}:`, error);
             return 0;
         }
     }
@@ -434,14 +428,14 @@ class MarketAnalyzer {
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                 const iv = (ceData.option_greeks?.iv ?? 0) * 100;
+                 const iv = ceData.option_greeks?.iv ?? 0;
                  const pop = (1 - Math.abs(delta)) * 100;
 
                  const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop, instrumentKey: ceData.instrument_key };
                  
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min((iv / 3), 10).toFixed(1));
+                    const ivScore = parseFloat(Math.min((iv * 100 / 3), 10).toFixed(1));
                     const alignmentBonus = 'CE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     
@@ -456,14 +450,14 @@ class MarketAnalyzer {
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                 const iv = (peData.option_greeks?.iv ?? 0) * 100;
+                 const iv = peData.option_greeks?.iv ?? 0;
                  const pop = (1-Math.abs(delta)) * 100;
                  
                  const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop, instrumentKey: peData.instrument_key };
 
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min((iv / 3), 10).toFixed(1));
+                    const ivScore = parseFloat(Math.min((iv * 100 / 3), 10).toFixed(1));
                     const alignmentBonus = 'PE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     const score_breakdown = { deltaScore, ivScore, liquidityScore: liquidity.score, alignmentBonus };
