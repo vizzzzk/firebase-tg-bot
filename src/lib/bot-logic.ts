@@ -445,7 +445,7 @@ class MarketAnalyzer {
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                 const iv = (ceData.option_greeks?.iv ?? 0) / 100;
+                 const iv = (ceData.option_greeks?.iv ?? 0);
                  const pop = (1 - Math.abs(delta)) * 100;
 
                  const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop, instrumentKey: ceData.instrument_key };
@@ -467,7 +467,7 @@ class MarketAnalyzer {
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                 const iv = (peData.option_greeks?.iv ?? 0) / 100;
+                 const iv = (peData.option_greeks?.iv ?? 0);
                  const pop = (1-Math.abs(delta)) * 100;
                  
                  const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop, instrumentKey: peData.instrument_key };
@@ -573,16 +573,19 @@ function calculateMargin(spotPrice: number, premium: number): number {
 // Function to extract auth code from a URL
 function extractAuthCode(input: string): string | null {
   try {
-    const url = new URL(input);
-    return url.searchParams.get("code");
-  } catch (error) {
-    // If it's not a valid URL, it might be the code itself.
-    // Basic regex to check for a plausible code format.
+    // It's a full URL, parse it
+    if (input.startsWith('http')) {
+        const url = new URL(input);
+        return url.searchParams.get("code");
+    }
+    // It's just the code
     if (/^[a-zA-Z0-9\-_=]{6,100}$/.test(input)) {
         return input;
     }
-    return null;
+  } catch (error) {
+    // Ignore parsing errors, it's not a valid URL
   }
+  return null;
 }
 
 /**
@@ -900,5 +903,7 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }
+
+    
 
     

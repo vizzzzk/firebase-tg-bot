@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen, LogIn, LogOut } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen, LogIn, LogOut, Mail, KeySquare } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,9 +12,10 @@ import { sendMessage } from './actions';
 import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { getUserData, updateUserData } from './api/user-data/actions';
+import { requestOtp, verifyOtp } from './api/auth/actions';
 
 const initialPortfolio: Portfolio = { 
     positions: [], 
@@ -34,8 +35,16 @@ export default function Home() {
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Auth state
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [email, setEmail] = useState('');
+  const [otp, setOtp] = useState('');
+  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [displayedOtp, setDisplayedOtp] = useState<string | null>(null);
+  const [isAuthPending, startAuthTransition] = useTransition();
+
 
   // Auth state listener
   useEffect(() => {
@@ -71,6 +80,11 @@ export default function Home() {
         setMessages([]);
         setPortfolio(initialPortfolio);
         setAccessToken(null);
+        // Reset auth flow state on logout
+        setEmail('');
+        setOtp('');
+        setIsOtpSent(false);
+        setDisplayedOtp(null);
       }
       setIsLoading(false);
     });
@@ -92,16 +106,46 @@ export default function Home() {
     }
   }, [messages]);
   
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Authentication error:", error);
-      toast({ title: "Login Failed", description: "Could not log in with Google.", variant: "destructive" });
-    }
+  const handleRequestOtp = async () => {
+    startAuthTransition(async () => {
+      if (!email) {
+        toast({ title: "Email is required", variant: "destructive" });
+        return;
+      }
+      try {
+        const result = await requestOtp(email);
+        if (result.success) {
+          setIsOtpSent(true);
+          setDisplayedOtp(result.otp); // For development: display OTP
+          toast({ title: "OTP Sent", description: "For development: check the console or UI for the OTP." });
+        } else {
+          toast({ title: "Error", description: result.message, variant: "destructive" });
+        }
+      } catch (error: any) {
+        toast({ title: "Failed to request OTP", description: error.message, variant: "destructive" });
+      }
+    });
   };
 
+  const handleVerifyOtp = async () => {
+    startAuthTransition(async () => {
+      if (!otp) {
+        toast({ title: "OTP is required", variant: "destructive" });
+        return;
+      }
+      try {
+        const result = await verifyOtp(email, otp);
+        if (result.success && result.customToken) {
+          // Firebase sign in is handled by the auth state change listener
+        } else {
+          toast({ title: "Login Failed", description: result.message || "An unknown error occurred.", variant: "destructive" });
+        }
+      } catch (error: any) {
+        toast({ title: "Failed to verify OTP", description: error.message, variant: "destructive" });
+      }
+    });
+  };
+  
   const handleLogout = async () => {
     await signOut(auth);
   };
@@ -109,11 +153,12 @@ export default function Home() {
   const resetPortfolio = () => {
     const clearedPortfolio = { ...initialPortfolio, lastActiveExpiry: portfolio.lastActiveExpiry };
     setPortfolio(clearedPortfolio);
-    setAccessToken(null); // Also clear the access token
+    setAccessToken(null);
     toast({
       title: "Portfolio Reset",
-      description: "Your paper trading portfolio and access token have been cleared.",
+      description: "Your paper trading portfolio has been cleared.",
     });
+    // This will now force a re-fetch of data from firestore on next action
   }
 
   const processAndSetMessages = (userInput: string, response: BotResponsePayload) => {
@@ -301,13 +346,55 @@ export default function Home() {
               <CardTitle className="text-3xl font-bold font-headline">Welcome to Webot</CardTitle>
             </div>
             <CardDescription className="text-center">
-              Your professional NIFTY options analysis assistant. Please log in to continue.
+              Sign in with your email to access your trading portfolio.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center">
-            <Button onClick={handleLogin} size="lg">
-              <LogIn /> Login with Google
-            </Button>
+          <CardContent className="flex flex-col items-center justify-center space-y-4">
+            {!isOtpSent ? (
+              <div className="w-full space-y-4">
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                  <Input 
+                    type="email" 
+                    placeholder="Enter your email" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={isAuthPending}
+                    className="pl-10"
+                  />
+                </div>
+                <Button onClick={handleRequestOtp} disabled={isAuthPending || !email} className="w-full">
+                  {isAuthPending ? <Loader className="animate-spin" /> : <><LogIn className="mr-2" /><span>Send OTP</span></>}
+                </Button>
+              </div>
+            ) : (
+              <div className="w-full space-y-4">
+                <p className="text-sm text-center text-muted-foreground">An OTP has been sent to {email}.</p>
+                {displayedOtp && (
+                  <div className="p-3 bg-green-100 border border-green-400 text-green-800 rounded-md text-center">
+                    <p className="text-sm">For Development: Your OTP is</p>
+                    <p className="font-bold text-lg tracking-widest">{displayedOtp}</p>
+                  </div>
+                )}
+                 <div className="relative">
+                  <KeySquare className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                  <Input 
+                    type="text" 
+                    placeholder="Enter OTP" 
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value)}
+                    disabled={isAuthPending}
+                    className="pl-10"
+                  />
+                </div>
+                <Button onClick={handleVerifyOtp} disabled={isAuthPending || !otp} className="w-full">
+                   {isAuthPending ? <Loader className="animate-spin" /> : <span>Verify OTP & Login</span>}
+                </Button>
+                 <Button variant="link" onClick={() => { setIsOtpSent(false); setOtp(''); setDisplayedOtp(null); }}>
+                  Use a different email
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -418,3 +505,5 @@ export default function Home() {
     </div>
   );
 }
+
+    
