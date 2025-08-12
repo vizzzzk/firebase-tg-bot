@@ -434,14 +434,14 @@ class MarketAnalyzer {
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                 const iv = (ceData.option_greeks?.iv ?? 0) * 100; // Correctly convert to percentage
+                 const iv = (ceData.option_greeks?.iv ?? 0) * 100;
                  const pop = (1 - Math.abs(delta)) * 100;
 
                  const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop, instrumentKey: ceData.instrument_key };
                  
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min((iv / 3), 10).toFixed(1)); // Use corrected IV
+                    const ivScore = parseFloat(Math.min((iv / 3), 10).toFixed(1));
                     const alignmentBonus = 'CE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     
@@ -456,14 +456,14 @@ class MarketAnalyzer {
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                 const iv = (peData.option_greeks?.iv ?? 0) * 100; // Correctly convert to percentage
+                 const iv = (peData.option_greeks?.iv ?? 0) * 100;
                  const pop = (1-Math.abs(delta)) * 100;
                  
                  const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop, instrumentKey: peData.instrument_key };
 
                  if (Math.abs(delta) >= 0.15 && Math.abs(delta) <= 0.25) {
                     const deltaScore = parseFloat((10 * (1 - Math.min(Math.abs(Math.abs(delta) - 0.20) / 0.05, 1))).toFixed(1));
-                    const ivScore = parseFloat(Math.min((iv / 3), 10).toFixed(1)); // Use corrected IV
+                    const ivScore = parseFloat(Math.min((iv / 3), 10).toFixed(1));
                     const alignmentBonus = 'PE' === marketAnalysis.recommendation ? 15 : 0;
                     const total_score = parseFloat((deltaScore + ivScore + liquidity.score + alignmentBonus).toFixed(1));
                     const score_breakdown = { deltaScore, ivScore, liquidityScore: liquidity.score, alignmentBonus };
@@ -611,7 +611,7 @@ export async function getBotResponse(message: string, token: string | null | und
 
             if (parts.length === 6) {
                 const [_, type, strikeStr, action, qtyStr, priceStr] = parts;
-                const strike = parseInt(strikeStr, 10); // FIX: Ensure strike is an integer
+                const strike = parseInt(strikeStr, 10);
                 const quantity = parseInt(qtyStr);
                 const price = parseFloat(priceStr);
 
@@ -830,6 +830,3 @@ export async function getBotResponse(message: string, token: string | null | und
 }
 
     
-
-    
-
