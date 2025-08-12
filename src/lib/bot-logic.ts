@@ -269,37 +269,29 @@ class UpstoxAPI {
     static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<number> {
         const headers = this.getHeaders(accessToken);
         const encodedInstrumentKey = encodeURIComponent(instrumentKey);
-        const url = `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${encodedInstrumentKey}`;
-
+        // Using OHLC endpoint as it's more reliable for F&O
+        const url = `https://api.upstox.com/v2/market-quote/ohlc?instrument_key=${encodedInstrumentKey}&interval=1d`;
+    
         try {
             const response = await fetch(url, { headers });
             if (!response.ok) {
-                console.error(`Upstox LTP API error for ${instrumentKey}: ${response.statusText}`);
                 const errorBody = await response.text();
-                console.error("Error Body:", errorBody);
+                console.error(`Upstox OHLC API error for ${instrumentKey}: ${response.status} ${response.statusText}`, errorBody);
                 return 0;
             }
-
+    
             const data = await response.json();
-            if (!data || !data.data) {
-                console.error(`Invalid data structure received for ${instrumentKey}:`, data);
+            if (!data || !data.data || !data.data[instrumentKey]) {
+                console.error(`Invalid data structure received from OHLC API for ${instrumentKey}:`, data);
                 return 0;
             }
-
-            // Robustly find the LTP by iterating through the keys in the response data object
-            for (const key in data.data) {
-                if (key.trim().toLowerCase() === instrumentKey.trim().toLowerCase()) {
-                    const ltp = data.data[key]?.last_price;
-                    return typeof ltp === 'number' ? ltp : 0;
-                }
-            }
-
-            console.error(`LTP not found for instrumentKey ${instrumentKey} in API response.`);
-            console.log('Available keys in response:', Object.keys(data.data));
-            return 0;
-            
+    
+            // The close price from the daily OHLC is the most recent LTP.
+            const closePrice = data.data[instrumentKey]?.ohlc_details?.close_price;
+            return typeof closePrice === 'number' ? closePrice : 0;
+    
         } catch (error: any) {
-            console.error(`Exception while fetching LTP for ${instrumentKey}:`, error);
+            console.error(`Exception while fetching OHLC for ${instrumentKey}:`, error);
             return 0;
         }
     }
