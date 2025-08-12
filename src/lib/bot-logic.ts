@@ -301,6 +301,22 @@ class UpstoxAPI {
             throw error;
         }
     }
+    
+    static async getLTP(accessToken: string | null | undefined, instrumentKey: string): Promise<number | null> {
+        const headers = this.getHeaders(accessToken);
+        const url = `https://api-v2.upstox.com/v2/market-quote/ltp?instrument_key=${instrumentKey}`;
+        try {
+            const response = await fetch(url, { headers });
+            if (!response.ok) {
+                throw new Error(`Upstox API error fetching LTP: ${response.statusText}`);
+            }
+            const data = await response.json();
+            return data?.data?.[instrumentKey]?.last_price ?? null;
+        } catch (error: any) {
+            console.error(`Error fetching LTP for ${instrumentKey}:`, error);
+            return null;
+        }
+    }
 
     static async getMarketQuotes(accessToken: string | null | undefined, instrumentKeys: string[]): Promise<any> {
         if (instrumentKeys.length === 0) {
@@ -539,36 +555,28 @@ class MarketAnalyzer {
 
 
 // A helper to find the corresponding instrument key from the analysis data
-async function findInstrumentAndOptionData(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string; spotPrice?: number; vix?: number, delta?: number}> {
-    // This is still slow, but we only call it once before a trade.
-    const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
-    if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
-        console.error(`Could not get option chain for expiry ${expiry}`);
-        return {};
-    }
-    const spotPrice = optionChain.data[0]?.underlying_spot_price;
-    const vix = optionChain.data[0]?.vix;
+async function getLiveInstrumentData(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string; spotPrice?: number; vix?: number, delta?: number}> {
+    const instrumentKey = `NSE_FO|NIFTY${expiry.substring(2,4)}${expiry.substring(5,7)}${expiry.substring(8,10)}${strike}${type.substring(0,1)}`;
     
-    // Find the specific strike in the chain
-    const strikeData = optionChain.data.find((d: any) => d.strike_price === strike);
+    try {
+        const quoteResponse = await UpstoxAPI.getMarketQuote(token, instrumentKey);
+        const quote = quoteResponse?.data?.[instrumentKey];
+        if (quote) {
+             const underlyingResponse = await UpstoxAPI.getMarketQuote(token, 'NSE_INDEX|Nifty 50');
+             const underlying = underlyingResponse?.data?.['NSE_INDEX|Nifty 50'];
 
-    if (!strikeData) {
-        console.error(`Could not find strike ${strike} in option chain for expiry ${expiry}`);
-        return { spotPrice, vix };
+             return {
+                 instrumentKey,
+                 spotPrice: underlying?.last_price,
+                 vix: underlying?.vix,
+                 delta: quote.option_greeks?.delta
+             };
+        }
+    } catch(e) {
+        console.error(`Could not fetch live instrument data for ${instrumentKey}:`, e);
     }
-
-    let instrumentKey, delta;
-    if (type === 'CE' && strikeData.call_options) {
-        instrumentKey = strikeData.call_options.instrument_key;
-        delta = strikeData.call_options.option_greeks?.delta;
-    } else if (type === 'PE' && strikeData.put_options) {
-        instrumentKey = strikeData.put_options.instrument_key;
-        delta = strikeData.put_options.option_greeks?.delta;
-    } else {
-        console.error(`Could not find specified option type ${type} for strike ${strike}`);
-    }
-
-    return { instrumentKey, spotPrice, vix, delta };
+    
+    return {};
 }
 
 async function getLivePriceAndDelta(token: string | null | undefined, instrumentKey: string): Promise<{ ltp: number | null; delta: number | null }> {
@@ -704,7 +712,7 @@ export async function getBotResponse(message: string, token: string | null | und
                    return { type: 'error', message: `Please run an analysis for an expiry date first before placing a trade.`, portfolio };
                 }
                 
-                const { instrumentKey, spotPrice, delta } = await findInstrumentAndOptionData(token, portfolio.lastActiveExpiry, strike, type.toUpperCase() as 'CE' | 'PE');
+                const { instrumentKey, spotPrice, delta } = await getLiveInstrumentData(token, portfolio.lastActiveExpiry, strike, type.toUpperCase() as 'CE' | 'PE');
 
                 if (!instrumentKey || !spotPrice) {
                     return { type: 'error', message: `Could not find instrument key or spot price for ${type.toUpperCase()} ${strike}. Cannot place trade. Please ensure the strike exists for the selected expiry.`, portfolio };
