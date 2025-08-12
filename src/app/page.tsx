@@ -13,7 +13,8 @@ import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
 import { onAuthStateChanged, signOut, User as FirebaseUser, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
+import { doc, setDoc } from "firebase/firestore";
 import { getUserData, updateUserData } from './api/user-data/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
@@ -52,37 +53,18 @@ export default function Home() {
       setIsLoading(true);
       if (currentUser) {
         setUser(currentUser);
-        
-        // Robustly check if the user is new to avoid race conditions.
-        // A new user is one whose creation time and last sign-in time are very close.
-        const creationTime = new Date(currentUser.metadata.creationTime || 0).getTime();
-        const lastSignInTime = new Date(currentUser.metadata.lastSignInTime || 0).getTime();
-        const isNewUser = Math.abs(creationTime - lastSignInTime) < 60000; // Less than 1 minute difference
+        // For an existing user, fetch their data from Firestore.
+        try {
+          const userData = await getUserData(currentUser.uid);
+          // If userData is null (doc doesn't exist yet), the initialPortfolio will be used.
+          setAccessToken(userData?.accessToken || null);
+          setPortfolio(userData?.portfolio || initialPortfolio);
 
-        if (isNewUser) {
-          // For a new user, just set the initial default state locally.
-          // DO NOT call Firestore to prevent race condition errors.
+        } catch (error: any) {
+          console.error("Error fetching user data:", error);
+          toast({ title: "Error", description: `Could not load your data: ${error.message}. Using defaults.`, variant: "destructive" });
           setPortfolio(initialPortfolio);
           setAccessToken(null);
-          // The user document will be created lazily on the first call to updateUserData.
-        } else {
-          // For an existing user, fetch their data from Firestore.
-          try {
-            const userData = await getUserData(currentUser.uid);
-            if (userData) {
-              setAccessToken(userData.accessToken || null);
-              setPortfolio(userData.portfolio || initialPortfolio);
-            } else {
-              // Fallback for an existing user with no data document yet.
-              setPortfolio(initialPortfolio);
-              setAccessToken(null);
-            }
-          } catch (error) {
-            console.error("Error fetching user data:", error);
-            toast({ title: "Error", description: "Could not load your saved data. Using defaults.", variant: "destructive" });
-            setPortfolio(initialPortfolio);
-            setAccessToken(null);
-          }
         }
         
         // Set initial bot message if chat is empty
@@ -108,7 +90,7 @@ export default function Home() {
     });
     return () => unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run only once on component mount
+  }, []);
 
 
   // Save state to Firestore whenever it changes for a logged-in user
@@ -130,10 +112,18 @@ export default function Home() {
         return;
       }
       try {
-        await createUserWithEmailAndPassword(auth, email, password);
-        // onAuthStateChanged will handle setting the new user state and defaults.
-        // No need to call Firestore here.
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const newUser = userCredential.user;
+
+        // **Immediate Document Creation**
+        // Create the user's document right after successful sign-up to avoid race conditions.
+        await updateUserData(newUser.uid, {
+            accessToken: null,
+            portfolio: initialPortfolio,
+        });
+
         toast({ title: "Success!", description: "Your account has been created and you are logged in." });
+        // onAuthStateChanged will handle the rest of the state updates.
       } catch (error: any) {
         console.error("Sign up error:", error);
         let message = `An unknown error occurred. Code: ${error.code}. Message: ${error.message}`;

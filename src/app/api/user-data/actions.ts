@@ -10,8 +10,9 @@ interface UserData {
   portfolio?: Portfolio;
 }
 
-// Function to get user data from Firestore
-export async function getUserData(userId: string): Promise<UserData | null> {
+// Function to get user data from Firestore.
+// It is tolerant and returns null if the document doesn't exist, instead of throwing.
+export async function getUserData(userId: string): Promise<(UserData & { [key: string]: any }) | null> {
   if (!userId) return null;
   try {
     const userDocRef = doc(db, 'users', userId);
@@ -20,7 +21,8 @@ export async function getUserData(userId: string): Promise<UserData | null> {
     if (docSnap.exists()) {
       return docSnap.data() as UserData;
     } else {
-      // It's normal for a new user to not have a document yet.
+      // It's normal for a new user's doc to not exist yet.
+      // The caller is responsible for handling this case (e.g., by using default data).
       return null;
     }
   } catch (error) {
@@ -29,15 +31,17 @@ export async function getUserData(userId: string): Promise<UserData | null> {
   }
 }
 
-// Function to update or create user data in Firestore
+// Function to update or create user data in Firestore.
+// Uses set with merge:true to handle both creation and updates atomically.
 export async function updateUserData(userId: string, data: UserData): Promise<void> {
    if (!userId) return;
   try {
     const userDocRef = doc(db, 'users', userId);
     // Use set with merge:true to create or update the document atomically.
+    // This is safer and more robust than checking for existence first.
     await setDoc(userDocRef, data, { merge: true });
   } catch (error) {
     console.error('Error updating user data in Firestore:', error);
-    // Don't throw error to the client, just log it.
+    // Avoid throwing to the client for background updates; just log the error.
   }
 }
