@@ -477,17 +477,6 @@ export default function Home() {
                 </div>
               </TabsContent>
             </Tabs>
-            <Alert variant="destructive" className="mt-6">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Project Configuration Help</AlertTitle>
-              <AlertDescription>
-                If authentication fails with an 'auth/configuration-not-found' or 'api-key-not-valid' error, please check the following in your Firebase project settings:
-                <ul className="list-disc pl-5 mt-2 text-xs">
-                  <li>Under **Authentication &gt; Sign-in method**, ensure the **Email/Password** provider is enabled.</li>
-                  <li>Under **Authentication &gt; Settings &gt; Authorized domains**, ensure your development domain (e.g., **localhost**) is added.</li>
-                </ul>
-              </AlertDescription>
-            </Alert>
           </CardContent>
         </Card>
       </div>
