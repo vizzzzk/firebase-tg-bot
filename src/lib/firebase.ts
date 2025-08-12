@@ -1,4 +1,3 @@
-
 // Import the functions you need from the SDKs you need
 import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
@@ -15,14 +14,27 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-  console.error("Missing NEXT_PUBLIC_FIREBASE_API_KEY");
+let app: FirebaseApp;
+let auth: ReturnType<typeof getAuth>;
+let db: ReturnType<typeof getFirestore>;
+
+// Check if the required environment variables are set.
+// This prevents the app from crashing during build if they are missing.
+if (firebaseConfig.apiKey) {
+    app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+} else {
+    console.error("Firebase config is missing. Client-side Firebase features will be disabled.");
+    // In a server-side build environment, we might want to throw to prevent a broken deployment.
+    if (process.env.NODE_ENV === 'production' && typeof window === 'undefined') {
+        throw new Error("CRITICAL: NEXT_PUBLIC_FIREBASE_API_KEY is not defined. Build failed.");
+    }
+    // Provide dummy objects for the browser to avoid reference errors.
+    app = {} as FirebaseApp;
+    auth = {} as ReturnType<typeof getAuth>;
+    db = {} as ReturnType<typeof getFirestore>;
 }
 
-// Initialize Firebase for SSR and client-side, ensuring it only happens once.
-const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
-
-const auth = getAuth(app);
-const db = getFirestore(app);
 
 export { app, auth, db };
