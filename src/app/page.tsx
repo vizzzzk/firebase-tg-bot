@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen, LogIn, LogOut, Mail, KeySquare, Eye, EyeOff, UserPlus, AlertTriangle } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen, LogIn, LogOut, Mail, KeySquare, Eye, EyeOff, UserPlus, AlertTriangle, UserCog, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,12 +12,14 @@ import { sendMessage } from './actions';
 import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
-import { onAuthStateChanged, signOut, User as FirebaseUser, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User as FirebaseUser, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { getUserData, updateUserData } from './api/user-data/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 
 const initialPortfolio: Portfolio = { 
@@ -47,6 +49,11 @@ export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
   const [isAuthPending, startAuthTransition] = useTransition();
 
+  // Profile Dialog state
+  const [isProfileOpen, setProfileOpen] = useState(false);
+  const [displayName, setDisplayName] = useState('');
+  const [isProfileUpdating, setProfileUpdating] = useState(false);
+
 
   // Auth state listener
   useEffect(() => {
@@ -54,6 +61,7 @@ export default function Home() {
       setIsLoading(true);
       if (currentUser) {
         setUser(currentUser);
+        setDisplayName(currentUser.displayName || '');
         // For an existing user, fetch their data from Firestore.
         try {
           const userData = await getUserData(currentUser.uid);
@@ -72,7 +80,7 @@ export default function Home() {
         const initialBotMessage: Message = {
           id: crypto.randomUUID(),
           role: 'bot',
-          content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
+          content: "Hello! I am VizBot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
         };
         if (messages.length === 0) {
           setMessages([initialBotMessage]);
@@ -117,11 +125,12 @@ export default function Home() {
         const newUser = userCredential.user;
 
         // **Immediate Document Creation**
-        // Create the user's document right after successful sign-up to avoid race conditions.
-        await updateUserData(newUser.uid, {
+        await setDoc(doc(db, "users", newUser.uid), {
             accessToken: null,
             portfolio: initialPortfolio,
-        });
+            createdAt: serverTimestamp(),
+            email: newUser.email,
+        }, { merge: true });
 
         toast({ title: "Success!", description: "Your account has been created and you are logged in." });
         // onAuthStateChanged will handle the rest of the state updates.
@@ -154,7 +163,8 @@ export default function Home() {
         await signInWithEmailAndPassword(auth, email, password);
          // onAuthStateChanged will handle setting the new user state
         toast({ title: "Success!", description: "You are now logged in." });
-      } catch (error: any) {
+      } catch (error: any)
+      {
          console.error("Sign in error:", error);
          let message = `An unknown error occurred. Code: ${error.code}.`;
          if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
@@ -183,6 +193,40 @@ export default function Home() {
       description: "Your paper trading portfolio has been cleared.",
     });
   }
+
+  const handlePasswordReset = async () => {
+    if (!user?.email) {
+        toast({ title: "Error", description: "No email address found for your account.", variant: "destructive" });
+        return;
+    }
+    try {
+        await sendPasswordResetEmail(auth, user.email);
+        toast({ 
+            title: "Password Reset Email Sent", 
+            description: `An email has been sent to ${user.email} with instructions to reset your password.`
+        });
+        setProfileOpen(false);
+    } catch (error: any) {
+        console.error("Password reset error:", error);
+        toast({ title: "Error", description: `Failed to send password reset email: ${error.message}`, variant: "destructive" });
+    }
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!user) return;
+    setProfileUpdating(true);
+    try {
+        await updateProfile(user, { displayName });
+        await updateUserData(user.uid, { displayName });
+        toast({ title: "Success", description: "Your profile has been updated.", icon: <CheckCircle className="text-green-500" /> });
+        setProfileOpen(false);
+    } catch (error: any) {
+        console.error("Profile update error:", error);
+        toast({ title: "Error", description: `Failed to update profile: ${error.message}`, variant: "destructive" });
+    } finally {
+        setProfileUpdating(false);
+    }
+};
 
   const processAndSetMessages = (userInput: string, response: BotResponsePayload) => {
     const userMessage: Message = {
@@ -360,7 +404,7 @@ export default function Home() {
           <CardHeader>
             <div className="flex items-center justify-center gap-3 mb-4">
               <Bot className="w-10 h-10 text-primary" />
-              <CardTitle className="text-3xl font-bold font-headline">Welcome to Webot</CardTitle>
+              <CardTitle className="text-3xl font-bold font-headline">Welcome to VizBot</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
@@ -459,13 +503,67 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <Bot className="w-8 h-8 text-primary" />
               <div>
-                <CardTitle className="text-2xl font-bold font-headline">Webot</CardTitle>
+                <CardTitle className="text-2xl font-bold font-headline">VizBot</CardTitle>
                 <CardDescription>Professional NIFTY Options Analysis</CardDescription>
               </div>
             </div>
-             <Button onClick={handleLogout} variant="outline" size="sm">
-                <LogOut className="w-4 h-4 mr-2" /> Logout
-            </Button>
+             <Dialog open={isProfileOpen} onOpenChange={setProfileOpen}>
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" className="relative h-10 w-10 rounded-full">
+                            <Avatar className="h-10 w-10">
+                                <AvatarImage src={user.photoURL ?? ''} alt={user.displayName ?? user.email ?? ''} />
+                                <AvatarFallback>{user.email?.[0].toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="w-56" align="end" forceMount>
+                        <DropdownMenuLabel className="font-normal">
+                            <div className="flex flex-col space-y-1">
+                                <p className="text-sm font-medium leading-none">{user.displayName || 'User'}</p>
+                                <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
+                            </div>
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DialogTrigger asChild>
+                           <DropdownMenuItem>
+                                <UserCog className="mr-2 h-4 w-4" />
+                                <span>Profile</span>
+                            </DropdownMenuItem>
+                        </DialogTrigger>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={handleLogout}>
+                           <LogOut className="mr-2 h-4 w-4" />
+                            <span>Log out</span>
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Profile Settings</DialogTitle>
+                        <DialogDescription>
+                            Manage your account details here.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label htmlFor="email" className="text-right text-sm font-medium">Email</label>
+                            <Input id="email" value={user.email ?? ''} readOnly disabled className="col-span-3"/>
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label htmlFor="name" className="text-right text-sm font-medium">Name</label>
+                            <Input id="name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="col-span-3"/>
+                        </div>
+                    </div>
+                    <DialogFooter className="justify-between sm:justify-between">
+                         <Button variant="outline" onClick={handlePasswordReset}>Change Password</Button>
+                         <Button onClick={handleProfileUpdate} disabled={isProfileUpdating}>
+                            {isProfileUpdating && <Loader className="mr-2 h-4 w-4 animate-spin" />}
+                            Save changes
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
           </div>
         </CardHeader>
         <CardContent ref={chatContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6">

@@ -3,7 +3,7 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
 
 export const metadata: Metadata = {
-  title: 'Webot',
+  title: 'VizBot',
   description: 'A web interface for your bot.',
 };
 
