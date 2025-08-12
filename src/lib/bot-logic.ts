@@ -501,17 +501,29 @@ class MarketAnalyzer {
 async function findInstrumentAndSpot(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string, spotPrice?: number, vix?: number}> {
     const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
     if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
+        console.error(`Could not get option chain for expiry ${expiry}`);
         return { instrumentKey: undefined, spotPrice: undefined };
     }
     const spotPrice = optionChain.data[0]?.underlying_spot_price;
     const vix = optionChain.data[0]?.vix;
+    
+    // Find the specific strike in the chain
     const strikeData = optionChain.data.find((d: any) => d.strike_price === strike);
-    let instrumentKey;
-    if (type === 'CE') {
-        instrumentKey = strikeData?.call_options?.instrument_key;
-    } else {
-        instrumentKey = strikeData?.put_options?.instrument_key;
+
+    if (!strikeData) {
+        console.error(`Could not find strike ${strike} in option chain for expiry ${expiry}`);
+        return { instrumentKey: undefined, spotPrice, vix };
     }
+
+    let instrumentKey;
+    if (type === 'CE' && strikeData.call_options) {
+        instrumentKey = strikeData.call_options.instrument_key;
+    } else if (type === 'PE' && strikeData.put_options) {
+        instrumentKey = strikeData.put_options.instrument_key;
+    } else {
+        console.error(`Could not find specified option type ${type} for strike ${strike}`);
+    }
+
     return { instrumentKey, spotPrice, vix };
 }
 
