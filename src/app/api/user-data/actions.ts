@@ -20,8 +20,8 @@ export async function getUserData(userId: string): Promise<UserData | null> {
     if (docSnap.exists()) {
       return docSnap.data() as UserData;
     } else {
-      console.log('No such document for user:', userId);
-      return null; // No document found for this user
+      console.log('No document found for user:', userId);
+      return null;
     }
   } catch (error) {
     console.error('Error fetching user data from Firestore:', error);
@@ -41,7 +41,7 @@ export async function updateUserData(userId: string, data: UserData): Promise<vo
       await updateDoc(userDocRef, data);
     } else {
       // Document does not exist, create it
-      await setDoc(userDocRef, data);
+      await setDoc(userDocRef, data, { merge: true });
     }
   } catch (error) {
     console.error('Error updating user data in Firestore:', error);

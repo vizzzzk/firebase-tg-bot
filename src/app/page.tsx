@@ -58,7 +58,7 @@ export default function Home() {
             setAccessToken(userData.accessToken || null);
             setPortfolio(userData.portfolio || initialPortfolio);
           } else {
-            // New user, set initial state
+            // New user, set initial state. Document will be created on first data update.
             setPortfolio(initialPortfolio);
             setAccessToken(null);
           }
@@ -90,7 +90,7 @@ export default function Home() {
   }, [toast]);
 
 
-  // Save state to Firestore whenever it changes
+  // Save state to Firestore whenever it changes for a logged-in user
   useEffect(() => {
     if (user && !isLoading) {
       updateUserData(user.uid, { accessToken, portfolio });
@@ -110,11 +110,11 @@ export default function Home() {
       }
       try {
         await createUserWithEmailAndPassword(auth, email, password);
-        // onAuthStateChanged will handle the rest
+        // onAuthStateChanged will handle setting the new user state
         toast({ title: "Success!", description: "Your account has been created and you are logged in." });
       } catch (error: any) {
         const errorCode = error.code;
-        let message = "An unknown error occurred.";
+        let message = "An unknown error occurred. Please try again.";
         if (errorCode === 'auth/email-already-in-use') {
           message = "This email is already in use. Please sign in instead.";
         } else if (errorCode === 'auth/invalid-email') {
@@ -135,7 +135,7 @@ export default function Home() {
       }
       try {
         await signInWithEmailAndPassword(auth, email, password);
-         // onAuthStateChanged will handle the rest
+         // onAuthStateChanged will handle setting the new user state
         toast({ title: "Success!", description: "You are now logged in." });
       } catch (error: any) {
          const errorCode = error.code;
