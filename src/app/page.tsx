@@ -62,19 +62,18 @@ export default function Home() {
       if (currentUser) {
         setUser(currentUser);
         setDisplayName(currentUser.displayName || '');
-        // For an existing user, fetch their data from Firestore.
-        try {
-          const userData = await getUserData(currentUser.uid);
-          // If userData is null (doc doesn't exist yet), the initialPortfolio will be used.
-          setAccessToken(userData?.accessToken || null);
-          setPortfolio(userData?.portfolio || initialPortfolio);
-
-        } catch (error: any) {
-          console.error("Error fetching user data:", error);
-          toast({ title: "Error", description: `Could not load your data: ${error.message}. Using defaults.`, variant: "destructive" });
-          setPortfolio(initialPortfolio);
-          setAccessToken(null);
-        }
+        
+        // Asynchronously fetch user data without blocking the UI
+        getUserData(currentUser.uid).then(userData => {
+          if (userData) {
+            setAccessToken(userData.accessToken || null);
+            setPortfolio(userData.portfolio || initialPortfolio);
+            if(userData.displayName) {
+                setDisplayName(userData.displayName);
+            }
+          }
+          // If userData is null, the initial state is kept, no error shown to user.
+        });
         
         // Set initial bot message if chat is empty
         const initialBotMessage: Message = {
@@ -513,14 +512,14 @@ export default function Home() {
                         <Button variant="ghost" className="relative h-10 w-10 rounded-full">
                             <Avatar className="h-10 w-10">
                                 <AvatarImage src={user.photoURL ?? ''} alt={user.displayName ?? user.email ?? ''} />
-                                <AvatarFallback>{user.email?.[0].toUpperCase()}</AvatarFallback>
+                                <AvatarFallback>{displayName?.[0].toUpperCase() || user.email?.[0].toUpperCase()}</AvatarFallback>
                             </Avatar>
                         </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="w-56" align="end" forceMount>
                         <DropdownMenuLabel className="font-normal">
                             <div className="flex flex-col space-y-1">
-                                <p className="text-sm font-medium leading-none">{user.displayName || 'User'}</p>
+                                <p className="text-sm font-medium leading-none">{displayName || 'User'}</p>
                                 <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
                             </div>
                         </DropdownMenuLabel>

@@ -8,11 +8,13 @@ import type { Portfolio } from '@/lib/bot-logic';
 interface UserData {
   accessToken?: string | null;
   portfolio?: Portfolio;
+  displayName?: string;
+  [key: string]: any;
 }
 
 // Function to get user data from Firestore.
 // It is tolerant and returns null if the document doesn't exist or if an error occurs, instead of throwing.
-export async function getUserData(userId: string): Promise<(UserData & { [key: string]: any }) | null> {
+export async function getUserData(userId: string): Promise<UserData | null> {
   if (!userId) return null;
   try {
     const userDocRef = doc(db, 'users', userId);
