@@ -9,7 +9,12 @@ const config = {
     UPSTOX_API_KEY: process.env.UPSTOX_API_KEY || "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: process.env.UPSTOX_API_SECRET || "3yn8j0huzj",
     UPSTOX_REDIRECT_URI: "https://localhost.com",
-    NIFTY_LOT_SIZE: 75,
+    NIFTY_LOT_SIZE: 50,
+    BROKERAGE_PER_LOT: 20, // Flat fee per lot per side (buy/sell)
+    STT_CTT_CHARGE: 0.000625, // 0.0625% on sell side (premium)
+    TRANSACTION_CHARGE: 0.00053, // 0.053% on premium
+    GST_CHARGE: 0.18, // 18% on (Brokerage + Transaction Charge)
+    SEBI_CHARGE: 0.000001, // Rs 10 per crore
 };
 
 // ===== PORTFOLIO MANAGEMENT =====
@@ -19,12 +24,13 @@ const PositionSchema = z.object({
     type: z.enum(['CE', 'PE']),
     strike: z.number(),
     action: z.enum(['BUY', 'SELL']),
-    quantity: z.number(),
+    quantity: z.number(), // in lots
     entryPrice: z.number(),
     expiry: z.string(),
     entryTimestamp: z.string(),
     instrumentKey: z.string(),
     marginBlocked: z.number(),
+    stopLoss: z.number(),
 });
 export type Position = z.infer<typeof PositionSchema>;
 
@@ -143,6 +149,7 @@ const AnalysisPayloadSchema = BasePayloadSchema.extend({
         pe: z.array(OptionDataSchema.extend({type: z.literal("PE")})),
     }),
     tradeRecommendation: TradeRecommendationSchema.optional(),
+    vix: z.number().optional(),
 });
 export type AnalysisPayload = z.infer<typeof AnalysisPayloadSchema>;
 
@@ -181,7 +188,13 @@ const ClosePositionPayloadSchema = BasePayloadSchema.extend({
     message: z.string(),
 });
 
-export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload | PaperTradePayload | PortfolioPayloadSchema | ClosePositionPayloadSchema;
+const ResetPayloadSchema = BasePayloadSchema.extend({
+    type: z.literal('reset'),
+    message: z.string(),
+});
+
+
+export type BotResponsePayload = AnalysisPayload | ExpiryPayload | ErrorPayload | PaperTradePayload | PortfolioPayloadSchema | ClosePositionPayloadSchema | ResetPayloadSchema;
 
 // ===== API HELPERS =====
 class UpstoxAPI {
@@ -252,60 +265,73 @@ class UpstoxAPI {
             throw error;
         }
     }
-
-    static async getLTP(accessToken: string | null | undefined, expiryDate: string, strike: number, optionType: 'CE' | 'PE'): Promise<number> {
-        console.log(`Fetching LTP for ${optionType} ${strike} @ ${expiryDate}`);
+    
+    static async getMarketQuote(accessToken: string | null | undefined, instrumentKey: string): Promise<any> {
+        const headers = this.getHeaders(accessToken);
+        const url = `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${instrumentKey}`;
         try {
-            const optionChain = await this.getOptionChain(accessToken, expiryDate);
-            if (!optionChain || !optionChain.data) {
-                console.error("Failed to fetch or parse option chain.");
-                return 0;
+            const response = await fetch(url, { headers });
+             if (!response.ok) {
+                throw new Error(`Upstox LTP API error: ${response.statusText}`);
             }
-    
-            const targetStrike = parseFloat(strike.toString());
-    
-            const strikeData = optionChain.data.find((d: any) => {
-                const itemStrike = parseFloat(d.strike_price);
-                return itemStrike === targetStrike;
-            });
-    
-            if (!strikeData) {
-                console.error(`Strike ${targetStrike} not found in option chain for ${expiryDate}`);
-                const allStrikes = optionChain.data.map((d:any) => d.strike_price);
-                console.log("Available strikes:", allStrikes.slice(0, 20));
-                return 0;
-            }
-            
-            const optionDetails = optionType === 'CE' ? strikeData.call_options : strikeData.put_options;
-            
-            if (!optionDetails || !optionDetails.market_data) {
-                console.error(`No ${optionType} market data for strike ${targetStrike}`);
-                return 0;
-            }
-            
-            const ltp = optionDetails.market_data.last_price;
-            
-            if (typeof ltp !== 'number') {
-                 console.error(`LTP is not a number for ${optionType} ${strike}:`, ltp, `(type: ${typeof ltp})`);
-                 const fallbackLtp = optionDetails.market_data.ltp;
-                 if(typeof fallbackLtp === 'number'){
-                     console.log(`Found LTP in fallback field 'ltp': ${fallbackLtp}`);
-                     return fallbackLtp;
-                 }
-                 return 0;
-            }
-    
-            console.log(`Found LTP in 'last_price': ${ltp}`);
-            return ltp;
+            const data = await response.json();
+            return data.data[instrumentKey]?.last_price;
         } catch (error: any) {
-            console.error(`Error in getLTP for ${optionType} ${strike} @ ${expiryDate}:`, error);
-            throw error;
+            console.error(`Error fetching LTP for ${instrumentKey}:`, error);
+            // Don't throw here, allow fallback
+            return 0;
         }
     }
 }
 
 
-// ===== ANALYSIS LOGIC =====
+// ===== ANALYSIS & UTILITY LOGIC =====
+
+function isMarketOpen(): boolean {
+    const now = new Date();
+    const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    
+    const day = istTime.getDay();
+    const hour = istTime.getHours();
+    const minutes = istTime.getMinutes();
+
+    // Market is open Monday (1) to Friday (5)
+    if (day < 1 || day > 5) {
+        return false;
+    }
+
+    // Market timings: 9:15 AM to 3:30 PM
+    if (hour < 9 || (hour === 9 && minutes < 15)) {
+        return false;
+    }
+    if (hour > 15 || (hour === 15 && minutes > 30)) {
+        return false;
+    }
+
+    return true;
+}
+
+function calculateCosts(premium: number, quantity: number, action: 'BUY' | 'SELL'): { total: number, breakdown: string } {
+    const totalPremium = premium * quantity * config.NIFTY_LOT_SIZE;
+    const brokerage = config.BROKERAGE_PER_LOT * quantity;
+    const transactionCharge = totalPremium * config.TRANSACTION_CHARGE;
+    const stt = action === 'SELL' ? totalPremium * config.STT_CTT_CHARGE : 0;
+    const sebiCharge = totalPremium * config.SEBI_CHARGE;
+    const gst = (brokerage + transactionCharge) * config.GST_CHARGE;
+    
+    const totalCosts = brokerage + transactionCharge + stt + gst + sebiCharge;
+
+    const breakdown = `
+- **Brokerage:** Rs. ${brokerage.toFixed(2)}
+- **STT/CTT (on sell):** Rs. ${stt.toFixed(2)}
+- **Transaction Charges:** Rs. ${transactionCharge.toFixed(2)}
+- **GST:** Rs. ${gst.toFixed(2)}
+- **SEBI Fees:** Rs. ${sebiCharge.toFixed(2)}`;
+
+    return { total: parseFloat(totalCosts.toFixed(2)), breakdown };
+}
+
+
 class MarketAnalyzer {
     static calculateLiquidityScore(volume: number, oi: number) {
         const volumeScore = Math.min(volume / 1000, 10);
@@ -451,12 +477,13 @@ class MarketAnalyzer {
 
 
 // A helper to find the corresponding instrument key from the analysis data
-async function findInstrumentAndSpot(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string, spotPrice?: number}> {
+async function findInstrumentAndSpot(token: string | null | undefined, expiry: string, strike: number, type: 'CE' | 'PE'): Promise<{instrumentKey?: string, spotPrice?: number, vix?: number}> {
     const optionChain = await UpstoxAPI.getOptionChain(token, expiry);
     if (!optionChain || !optionChain.data || optionChain.data.length === 0) {
         return { instrumentKey: undefined, spotPrice: undefined };
     }
     const spotPrice = optionChain.data[0]?.underlying_spot_price;
+    const vix = optionChain.data[0]?.vix;
     const strikeData = optionChain.data.find((d: any) => d.strike_price === strike);
     let instrumentKey;
     if (type === 'CE') {
@@ -464,7 +491,7 @@ async function findInstrumentAndSpot(token: string | null | undefined, expiry: s
     } else {
         instrumentKey = strikeData?.put_options?.instrument_key;
     }
-    return { instrumentKey, spotPrice };
+    return { instrumentKey, spotPrice, vix };
 }
 
 function calculateMargin(spotPrice: number, premium: number): number {
@@ -484,7 +511,7 @@ export async function getBotResponse(message: string, token: string | null | und
     const mainCommand = parts[0].toLowerCase();
     
     // Command whitelist
-    const allowedCommands = ['start', 'auth', 'help', '/portfolio', '/close'];
+    const allowedCommands = ['start', 'auth', 'help', '/portfolio', '/close', '/reset'];
     const isExplicitCommand = allowedCommands.includes(mainCommand) || mainCommand.startsWith('exp:') || mainCommand.startsWith('/paper') || mainCommand.startsWith('/close');
     const isAuthCode = /^[a-zA-Z0-9]{6,50}$/.test(command) && !isExplicitCommand;
 
@@ -527,23 +554,31 @@ export async function getBotResponse(message: string, token: string | null | und
 
 **Core Commands:**
 - \`start\`: Begins the analysis by showing available expiry dates.
-- \`auth\`: Provides instructions on how to get a new access token for the Upstox API.
+- \`auth\`: Provides instructions on how to get a new access token.
 - \`help\`: Shows this help message.
 - \`/paper [CE/PE] [STRIKE] [BUY/SELL] [QTY] [PRICE]\`: Executes a simulated trade.
-- \`/portfolio\`: Shows your current simulated portfolio.
+- \`/portfolio\`: Shows your current simulated portfolio with MTM.
 - \`/close [POSITION_#]\`: Closes an open position from your portfolio.
+- \`/reset\`: Resets your portfolio and access token.
 
 **How to use:**
-1. Use the **Auth** button or type \`auth\` to get a link to log into Upstox.
-2. After logging in, you'll be redirected. Copy the \`code\` from the new URL's address bar.
-3. Paste the code directly into the chat here.
-4. The bot will automatically get an access token and show you the available expiries.
-5. Click on an expiry date to get a detailed market analysis and trading opportunities.
-6. Use the paper trade commands from the analysis to simulate trades.
+1. Use the **Auth** button or type \`auth\` to log into Upstox.
+2. After logging in, copy the \`code\` from the new URL's address bar.
+3. Paste the code into the chat. The bot will get an access token.
+4. This session is remembered even if you refresh the page.
+5. Click an expiry date for market analysis.
+6. Use paper trade commands (e.g., \`/paper CE 22500 SELL 1 150.5\`) to trade.
 `;
             return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**'), portfolio };
             
+        case '/reset':
+            return { type: 'reset', message: 'Portfolio has been reset successfully.', portfolio: { positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0 }};
+
         case '/paper':
+            if (!isMarketOpen()) {
+                return { type: 'error', message: `The market is currently closed. Paper trading is only allowed between 9:15 AM and 3:30 PM IST, Monday to Friday.`, portfolio };
+            }
+
             if (parts.length === 6) {
                 const [_, type, strikeStr, action, qtyStr, priceStr] = parts;
                 const strike = parseFloat(strikeStr);
@@ -567,6 +602,9 @@ export async function getBotResponse(message: string, token: string | null | und
                 if (marginRequired > availableFunds) {
                      return { type: 'error', message: `Insufficient funds. Margin required: Rs. ${marginRequired.toLocaleString()}. Available funds: Rs. ${availableFunds.toLocaleString()}.`, portfolio };
                 }
+                
+                const stopLoss = action.toUpperCase() === 'SELL' ? parseFloat((price * 2).toFixed(2)) : parseFloat((price * 0.5).toFixed(2));
+                const costs = calculateCosts(price, quantity, action.toUpperCase() as 'BUY'|'SELL');
 
                 const newPosition: Position = {
                     id: portfolio.positions.length > 0 ? Math.max(...portfolio.positions.map(p => p.id)) + 1 : 1,
@@ -579,6 +617,7 @@ export async function getBotResponse(message: string, token: string | null | und
                     entryTimestamp: new Date().toISOString(),
                     instrumentKey,
                     marginBlocked: marginRequired,
+                    stopLoss: stopLoss,
                 };
 
                 const updatedPortfolio = { 
@@ -591,11 +630,10 @@ export async function getBotResponse(message: string, token: string | null | und
 
 - **Trade ID:** ${newPosition.id}
 - **Position:** ${newPosition.action} ${newPosition.quantity} lot(s) (${newPosition.quantity * config.NIFTY_LOT_SIZE} units)
-- **Option:** ${newPosition.type} ${newPosition.strike.toFixed(1)}
-- **Entry Price:** Rs. ${newPosition.entryPrice.toFixed(2)}
-- **Expiry:** ${newPosition.expiry}
-- **Premium:** Rs. ${premium.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Option:** ${newPosition.type} ${newPosition.strike.toFixed(1)} @ Rs. ${newPosition.entryPrice.toFixed(2)}
+- **Stop-Loss:** Set at Rs. ${newPosition.stopLoss.toFixed(2)}
 - **Est. Margin Blocked:** Rs. ${marginRequired.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Est. Costs (Entry):** Rs. ${costs.total.toFixed(2)}
 - **Available Funds:** Rs. ${(availableFunds - marginRequired).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 
@@ -611,24 +649,36 @@ export async function getBotResponse(message: string, token: string | null | und
         case '/portfolio':
             const totalFunds = portfolio.initialFunds + portfolio.realizedPnL;
             const availableFundsPortfolio = totalFunds - portfolio.blockedMargin;
+            
+            let unrealizedPnl = 0;
 
             let portfolioMessage = `**🔒 Professional Paper Portfolio**\n\n`;
             portfolioMessage += `- **Total Funds:** Rs. ${totalFunds.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
-            portfolioMessage += `- **Blocked Margin:** Rs. ${portfolio.blockedMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
-            portfolioMessage += `- **Available Funds:** Rs. ${availableFundsPortfolio.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
-            portfolioMessage += `- **Realized P&L:** Rs. ${portfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n\n`;
+            portfolioMessage += `- **Realized P&L:** Rs. ${portfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
             
             if (portfolio.positions.length === 0) {
-                 portfolioMessage += `- **Open Positions:** 0`;
+                 portfolioMessage += `- **Open Positions:** 0\n`;
+                 portfolioMessage += `- **Unrealized P&L:** Rs. 0.00\n`;
+                 portfolioMessage += `- **Blocked Margin:** Rs. 0.00\n`;
             } else {
-                 portfolio.positions.forEach(pos => {
-                    portfolioMessage += `**Position #${pos.id}** (${pos.action} ${pos.quantity} lot)\n`;
-                    portfolioMessage += `- **Option:** ${pos.type} ${pos.strike.toFixed(1)}\n`;
-                    portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **Expiry:** ${pos.expiry}\n`;
-                    portfolioMessage += `- **Margin:** Rs. ${pos.marginBlocked.toLocaleString('en-IN')}\n`;
-                    portfolioMessage += `*To close, type: /close ${pos.id}*\n\n`;
+                const ltpPromises = portfolio.positions.map(p => UpstoxAPI.getMarketQuote(token, p.instrumentKey));
+                const ltps = await Promise.all(ltpPromises);
+
+                portfolio.positions.forEach((pos, index) => {
+                    const currentLtp = ltps[index];
+                    const mtm = currentLtp > 0 ? (pos.action === 'SELL' ? (pos.entryPrice - currentLtp) : (currentLtp - pos.entryPrice)) * pos.quantity * config.NIFTY_LOT_SIZE : 0;
+                    unrealizedPnl += mtm;
+                    portfolioMessage += `\n**Position #${pos.id}** (${pos.action} ${pos.quantity} lot)\n`;
+                    portfolioMessage += `- **Option:** ${pos.type} ${pos.strike.toFixed(1)} | ${pos.expiry}\n`;
+                    portfolioMessage += `- **Entry:** Rs. ${pos.entryPrice.toFixed(2)} | **LTP:** Rs. ${currentLtp > 0 ? currentLtp.toFixed(2) : 'N/A'}\n`;
+                    portfolioMessage += `- **MTM:** Rs. ${mtm.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${mtm >= 0 ? '✅' : '⚠️'}\n`;
+                    portfolioMessage += `- **Margin Blocked:** Rs. ${pos.marginBlocked.toLocaleString('en-IN')}\n`;
+                    portfolioMessage += `*To close, type: /close ${pos.id}*`;
                 });
+                portfolioMessage += `\n\n- **Total Unrealized P&L:** Rs. ${unrealizedPnl.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+                portfolioMessage += `- **Total Blocked Margin:** Rs. ${portfolio.blockedMargin.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
             }
+             portfolioMessage += `- **Available Funds:** Rs. ${availableFundsPortfolio.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
 
             return {
                 type: 'portfolio',
@@ -653,32 +703,36 @@ export async function getBotResponse(message: string, token: string | null | und
             }
             
             try {
-                const exitPrice = await UpstoxAPI.getLTP(token, positionToClose.expiry, positionToClose.strike, positionToClose.type);
+                const exitPrice = await UpstoxAPI.getMarketQuote(token, positionToClose.instrumentKey);
 
                 if(exitPrice === 0) {
                     return { type: 'error', message: `Could not fetch live price for ${positionToClose.type} ${positionToClose.strike}. Cannot close position.`, portfolio };
                 }
 
-                const pnl = (positionToClose.entryPrice - exitPrice) * positionToClose.quantity * config.NIFTY_LOT_SIZE * (positionToClose.action === 'SELL' ? 1 : -1);
+                const entryCosts = calculateCosts(positionToClose.entryPrice, positionToClose.quantity, positionToClose.action);
+                const exitAction = positionToClose.action === 'SELL' ? 'BUY' : 'SELL';
+                const exitCosts = calculateCosts(exitPrice, positionToClose.quantity, exitAction);
+                const totalCosts = entryCosts.total + exitCosts.total;
+
+                const grossPnl = (positionToClose.action === 'SELL' ? (positionToClose.entryPrice - exitPrice) : (exitPrice - positionToClose.entryPrice)) * positionToClose.quantity * config.NIFTY_LOT_SIZE;
+                const netPnl = grossPnl - totalCosts;
 
                 const updatedPositions = portfolio.positions.filter(p => p.id !== positionIdToClose);
                 const updatedPortfolio = { 
                     ...portfolio, 
                     positions: updatedPositions, 
-                    realizedPnL: portfolio.realizedPnL + pnl,
+                    realizedPnL: portfolio.realizedPnL + netPnl,
                     blockedMargin: portfolio.blockedMargin - positionToClose.marginBlocked,
                 };
 
                 const closeMessage = `**🔒 Position Closed Successfully**
-- **Trade ID:** ${positionToClose.id}
-- **Position:** ${positionToClose.action} ${positionToClose.quantity} lot(s)
-- **Option:** ${positionToClose.type} ${positionToClose.strike.toFixed(1)}
-- **Entry:** Rs. ${positionToClose.entryPrice.toFixed(2)}
-- **Exit:** Rs. ${exitPrice.toFixed(2)} (Current LTP)
-- **P&L:** Rs. ${pnl.toFixed(2)} ${pnl >= 0 ? '✅ Profit' : '⚠️ Loss'}
+- **Trade ID:** ${positionToClose.id} (${positionToClose.type} ${positionToClose.strike})
+- **Entry:** Rs. ${positionToClose.entryPrice.toFixed(2)} | **Exit:** Rs. ${exitPrice.toFixed(2)}
+- **Gross P&L:** Rs. ${grossPnl.toFixed(2)}
+- **Total Costs (Entry+Exit):** Rs. ${totalCosts.toFixed(2)}
+- **Net P&L:** Rs. **${netPnl.toFixed(2)}** ${netPnl >= 0 ? '✅ Profit' : '⚠️ Loss'}
 
-- **Total Funds:** Rs. ${(updatedPortfolio.initialFunds + updatedPortfolio.realizedPnL).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-- **Realized P&L:** Rs. ${updatedPortfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+- **Realized P&L (Total):** Rs. ${updatedPortfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                 
                 return {
                     type: 'close-position',
@@ -700,6 +754,7 @@ export async function getBotResponse(message: string, token: string | null | und
             }
 
             const spotPrice = optionChain.data[0]?.underlying_spot_price ?? 0;
+            const vix = optionChain.data[0]?.vix;
             const expDate = new Date(expiry);
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -723,6 +778,7 @@ export async function getBotResponse(message: string, token: string | null | und
                 opportunities: topOpportunities,
                 qualifiedStrikes,
                 tradeRecommendation,
+                vix,
                 accessToken: token ?? undefined,
                 portfolio: updatedPortfolio,
             };

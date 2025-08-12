@@ -49,7 +49,7 @@ const AnalysisCard = ({ analysis, onCommandClick }: { analysis: AnalysisPayload,
                 <span className="text-xs text-muted-foreground text-right">({analysis.timestamp} IST)</span>
             </div>
             <CardDescription>
-                Expiry: {analysis.expiry}, Spot: {analysis.spotPrice.toFixed(2)}, DTE: {analysis.dte}, Lot Size: {analysis.lotSize} units
+                Expiry: {analysis.expiry}, Spot: {analysis.spotPrice.toFixed(2)}, DTE: {analysis.dte}, Lot Size: {analysis.lotSize} units, VIX: {analysis.vix ? analysis.vix.toFixed(2) : 'N/A'}
             </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 text-xs">

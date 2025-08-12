@@ -3,7 +3,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,30 +12,88 @@ import ChatMessage, { type Message } from '@/components/chat-message';
 import { sendMessage } from './actions';
 import { BotResponsePayload, Portfolio } from '@/lib/bot-logic';
 
+const initialPortfolio: Portfolio = { positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0 };
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [portfolio, setPortfolio] = useState<Portfolio>({ positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0 });
+  const [portfolio, setPortfolio] = useState<Portfolio>(initialPortfolio);
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
+  // Load state from localStorage on initial render
   useEffect(() => {
-    // Initial message from the bot
-     const initialBotMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'bot',
-        content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
-      };
+    try {
+      const savedToken = localStorage.getItem('upstox_access_token');
+      const savedPortfolio = localStorage.getItem('paper_portfolio');
+      
+      if (savedToken) {
+        setAccessToken(JSON.parse(savedToken));
+      }
+      if (savedPortfolio) {
+        setPortfolio(JSON.parse(savedPortfolio));
+      }
+    } catch (error) {
+      console.error("Failed to load state from localStorage", error);
+      // If parsing fails, clear the corrupted data
+      localStorage.removeItem('upstox_access_token');
+      localStorage.removeItem('paper_portfolio');
+    }
+
+    const initialBotMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'bot',
+      content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
+    };
     setMessages([initialBotMessage]);
   }, []);
+
+  // Save state to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      if (accessToken) {
+        localStorage.setItem('upstox_access_token', JSON.stringify(accessToken));
+      } else {
+        localStorage.removeItem('upstox_access_token');
+      }
+    } catch (error) {
+       console.error("Failed to save access token to localStorage", error);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('paper_portfolio', JSON.stringify(portfolio));
+    } catch (error) {
+       console.error("Failed to save portfolio to localStorage", error);
+    }
+  }, [portfolio]);
+
 
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [messages]);
+  
+  const resetPortfolio = () => {
+    setPortfolio(initialPortfolio);
+    setAccessToken(null);
+    localStorage.removeItem('paper_portfolio');
+    localStorage.removeItem('upstox_access_token');
+    toast({
+      title: "Portfolio Reset",
+      description: "Your paper trading portfolio and access token have been cleared.",
+    });
+     const resetMessage: Message = {
+      id: crypto.randomUUID(),
+      role: 'bot',
+      content: "Your portfolio has been reset.",
+    };
+    setMessages(prev => [...prev, resetMessage]);
+  }
 
   const processAndSetMessages = (userInput: string, response: BotResponsePayload) => {
     const userMessage: Message = {
@@ -80,7 +138,7 @@ export default function Home() {
         botMessage.content = "Here are the available expiry dates for NIFTY 50.";
     } else if (response.type === 'analysis') {
         botMessage.content = `Analysis for expiry ${response.opportunities[0]?.strike ? `around strike ${response.opportunities[0].strike}` : ''}:`;
-    } else if (response.type === 'paper-trade' || response.type === 'portfolio' || response.type === 'close-position') {
+    } else if (response.type === 'paper-trade' || response.type === 'portfolio' || response.type === 'close-position' || response.type === 'reset') {
         botMessage.content = response.message;
         botMessage.payload = undefined;
     }
@@ -91,6 +149,12 @@ export default function Home() {
   const handleSendMessage = (messageText: string) => {
     const trimmedInput = messageText.trim();
     if (!trimmedInput || isPending) return;
+
+    if (trimmedInput.toLowerCase() === '/reset') {
+      resetPortfolio();
+      setInput('');
+      return;
+    }
 
     const tempUserMessage: Message = {
       id: crypto.randomUUID(),
@@ -186,6 +250,7 @@ export default function Home() {
               <Button variant="outline" size="sm" onClick={handlePaperTrade} disabled={isPending}><Newspaper /> Paper Trade</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('/portfolio')} disabled={isPending}><Briefcase /> Portfolio</Button>
               <Button variant="outline" size="sm" onClick={() => setInput('/close ')} disabled={isPending}><XCircle /> Close</Button>
+               <Button variant="outline" size="sm" onClick={() => handleCommandClick('/reset')} disabled={isPending}><RefreshCw /> Reset</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
           </div>
           <form onSubmit={handleSubmit} className="flex items-center gap-3">
