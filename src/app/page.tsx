@@ -52,44 +52,63 @@ export default function Home() {
       setIsLoading(true);
       if (currentUser) {
         setUser(currentUser);
-        try {
-          const userData = await getUserData(currentUser.uid);
-          if (userData) {
-            setAccessToken(userData.accessToken || null);
-            setPortfolio(userData.portfolio || initialPortfolio);
-          } else {
-            // New user, set initial state. Document will be created on first data update.
-            setPortfolio(initialPortfolio);
-            setAccessToken(null);
-            updateUserData(currentUser.uid, { portfolio: initialPortfolio, accessToken: null });
-          }
-           const initialBotMessage: Message = {
-            id: crypto.randomUUID(),
-            role: 'bot',
-            content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
-          };
-          if (messages.length === 0) {
-            setMessages([initialBotMessage]);
-          }
-        } catch (error) {
-          console.error("Error fetching user data:", error);
-          toast({ title: "Error", description: "Could not load your data.", variant: "destructive" });
+        
+        // Robustly check if the user is new to avoid race conditions.
+        // A new user is one whose creation time and last sign-in time are very close.
+        const creationTime = new Date(currentUser.metadata.creationTime || 0).getTime();
+        const lastSignInTime = new Date(currentUser.metadata.lastSignInTime || 0).getTime();
+        const isNewUser = Math.abs(creationTime - lastSignInTime) < 60000; // Less than 1 minute difference
+
+        if (isNewUser) {
+          // For a new user, just set the initial default state locally.
+          // DO NOT call Firestore to prevent race condition errors.
           setPortfolio(initialPortfolio);
           setAccessToken(null);
+          // The user document will be created lazily on the first call to updateUserData.
+        } else {
+          // For an existing user, fetch their data from Firestore.
+          try {
+            const userData = await getUserData(currentUser.uid);
+            if (userData) {
+              setAccessToken(userData.accessToken || null);
+              setPortfolio(userData.portfolio || initialPortfolio);
+            } else {
+              // Fallback for an existing user with no data document yet.
+              setPortfolio(initialPortfolio);
+              setAccessToken(null);
+            }
+          } catch (error) {
+            console.error("Error fetching user data:", error);
+            toast({ title: "Error", description: "Could not load your saved data. Using defaults.", variant: "destructive" });
+            setPortfolio(initialPortfolio);
+            setAccessToken(null);
+          }
         }
+        
+        // Set initial bot message if chat is empty
+        const initialBotMessage: Message = {
+          id: crypto.randomUUID(),
+          role: 'bot',
+          content: "Hello! I am Webot, your NIFTY options analysis assistant. Type 'start' or use the menu below to begin.",
+        };
+        if (messages.length === 0) {
+          setMessages([initialBotMessage]);
+        }
+
       } else {
+        // User is signed out, reset all state.
         setUser(null);
         setMessages([]);
         setPortfolio(initialPortfolio);
         setAccessToken(null);
-        // Reset auth flow state on logout
         setEmail('');
         setPassword('');
       }
       setIsLoading(false);
     });
     return () => unsubscribe();
-  }, [toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only once on component mount
 
 
   // Save state to Firestore whenever it changes for a logged-in user
@@ -112,7 +131,8 @@ export default function Home() {
       }
       try {
         await createUserWithEmailAndPassword(auth, email, password);
-        // onAuthStateChanged will handle setting the new user state
+        // onAuthStateChanged will handle setting the new user state and defaults.
+        // No need to call Firestore here.
         toast({ title: "Success!", description: "Your account has been created and you are logged in." });
       } catch (error: any) {
         console.error("Sign up error:", error);
@@ -533,5 +553,3 @@ export default function Home() {
     </div>
   );
 }
-
-    
