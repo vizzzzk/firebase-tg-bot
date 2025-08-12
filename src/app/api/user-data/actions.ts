@@ -11,7 +11,7 @@ interface UserData {
 }
 
 // Function to get user data from Firestore.
-// It is tolerant and returns null if the document doesn't exist, instead of throwing.
+// It is tolerant and returns null if the document doesn't exist or if an error occurs, instead of throwing.
 export async function getUserData(userId: string): Promise<(UserData & { [key: string]: any }) | null> {
   if (!userId) return null;
   try {
@@ -26,8 +26,10 @@ export async function getUserData(userId: string): Promise<(UserData & { [key: s
       return null;
     }
   } catch (error) {
-    console.error('Error fetching user data from Firestore:', error);
-    throw new Error('Could not fetch user data.');
+    console.error('Error fetching user data from Firestore (likely a permissions issue):', error);
+    // Return null instead of throwing, allowing the frontend to use default data.
+    // This makes the app more resilient to backend configuration issues.
+    return null;
   }
 }
 
