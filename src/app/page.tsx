@@ -12,7 +12,7 @@ import { sendMessage } from './actions';
 import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
-import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User as FirebaseUser, signInWithCustomToken } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { getUserData, updateUserData } from './api/user-data/actions';
 import { requestOtp, verifyOtp } from './api/auth/actions';
@@ -114,10 +114,10 @@ export default function Home() {
       }
       try {
         const result = await requestOtp(email);
-        if (result.success) {
+        if (result.success && result.otp) {
           setIsOtpSent(true);
           setDisplayedOtp(result.otp); // For development: display OTP
-          toast({ title: "OTP Sent", description: "For development: check the console or UI for the OTP." });
+          toast({ title: "OTP Sent", description: "Check your email (or the UI for dev) for the OTP." });
         } else {
           toast({ title: "Error", description: result.message, variant: "destructive" });
         }
@@ -136,7 +136,9 @@ export default function Home() {
       try {
         const result = await verifyOtp(email, otp);
         if (result.success && result.customToken) {
-          // Firebase sign in is handled by the auth state change listener
+           await signInWithCustomToken(auth, result.customToken);
+           // The onAuthStateChanged listener will handle the rest
+           toast({ title: "Success!", description: "You are now logged in."});
         } else {
           toast({ title: "Login Failed", description: result.message || "An unknown error occurred.", variant: "destructive" });
         }
@@ -505,5 +507,4 @@ export default function Home() {
     </div>
   );
 }
-
     
