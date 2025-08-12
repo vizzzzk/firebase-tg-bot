@@ -3,16 +3,26 @@
 "use client";
 
 import { useState, useRef, useEffect, useTransition } from 'react';
-import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw } from 'lucide-react';
+import { Bot, User, Loader, Rocket, HelpCircle, KeyRound, Newspaper, Send, Briefcase, XCircle, RefreshCw, BookOpen } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useToast } from "@/hooks/use-toast";
 import ChatMessage, { type Message } from '@/components/chat-message';
 import { sendMessage } from './actions';
-import { BotResponsePayload, Portfolio } from '@/lib/bot-logic';
+import { BotResponsePayload, Portfolio, TradeHistoryItem } from '@/lib/bot-logic';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHeader, TableRow, TableHead } from '@/components/ui/table';
 
-const initialPortfolio: Portfolio = { positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0 };
+const initialPortfolio: Portfolio = { 
+    positions: [], 
+    initialFunds: 400000, 
+    realizedPnL: 0, 
+    blockedMargin: 0,
+    winningTrades: 0,
+    totalTrades: 0,
+    tradeHistory: [],
+};
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -224,6 +234,39 @@ export default function Home() {
       }
   }
 
+  const exportToCSV = (data: TradeHistoryItem[]) => {
+    const headers = [
+      'Trade ID', 'Instrument', 'Expiry', 'Action', 'Quantity (Lots)', 
+      'Entry Price', 'Exit Price', 'Entry Time', 'Exit Time', 
+      'Gross P&L', 'Net P&L', 'Total Costs'
+    ];
+    const rows = data.map(trade => [
+      trade.id,
+      `${trade.strike} ${trade.type}`,
+      trade.expiry,
+      trade.action,
+      trade.quantity,
+      trade.entryPrice,
+      trade.exitPrice,
+      new Date(trade.entryTimestamp).toLocaleString(),
+      new Date(trade.exitTimestamp!).toLocaleString(),
+      trade.grossPnl,
+      trade.netPnl,
+      trade.totalCosts
+    ]);
+
+    let csvContent = "data:text/csv;charset=utf-8," 
+      + headers.join(",") + "\n" 
+      + rows.map(e => e.join(",")).join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "trade_journal.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
@@ -251,6 +294,57 @@ export default function Home() {
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('auth')} disabled={isPending}><KeyRound /> Auth</Button>
               <Button variant="outline" size="sm" onClick={handlePaperTrade} disabled={isPending}><Newspaper /> Paper Trade</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('/portfolio')} disabled={isPending}><Briefcase /> Portfolio</Button>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" disabled={isPending}><BookOpen/> Journal</Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-4xl">
+                  <DialogHeader>
+                    <DialogTitle>Trade Journal</DialogTitle>
+                    <DialogDescription>
+                      A log of all your closed trades.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="max-h-[60vh] overflow-y-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>ID</TableHead>
+                          <TableHead>Instrument</TableHead>
+                          <TableHead>Action</TableHead>
+                           <TableHead>Entry/Exit Price</TableHead>
+                          <TableHead>Net P&L</TableHead>
+                          <TableHead>Closed At</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {portfolio.tradeHistory?.length > 0 ? portfolio.tradeHistory.map((trade) => (
+                          <TableRow key={trade.id}>
+                            <TableCell>{trade.id}</TableCell>
+                            <TableCell>{trade.strike} {trade.type}</TableCell>
+                            <TableCell>{trade.action}</TableCell>
+                            <TableCell>{trade.entryPrice.toFixed(2)} / {trade.exitPrice?.toFixed(2)}</TableCell>
+                            <TableCell className={trade.netPnl >= 0 ? 'text-green-600' : 'text-red-600'}>{trade.netPnl.toFixed(2)}</TableCell>
+                            <TableCell>{new Date(trade.exitTimestamp!).toLocaleDateString()}</TableCell>
+                          </TableRow>
+                        )) : (
+                           <TableRow>
+                            <TableCell colSpan={6} className="text-center">No closed trades yet.</TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                   <DialogFooter>
+                     <Button 
+                        onClick={() => exportToCSV(portfolio.tradeHistory)}
+                        disabled={!portfolio.tradeHistory || portfolio.tradeHistory.length === 0}
+                      >
+                        Export to CSV
+                      </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
               <Button variant="outline" size="sm" onClick={() => setInput('/close ')} disabled={isPending}><XCircle /> Close</Button>
                <Button variant="outline" size="sm" onClick={resetPortfolio} disabled={isPending}><RefreshCw /> Reset</Button>
               <Button variant="outline" size="sm" onClick={() => handleCommandClick('help')} disabled={isPending}><HelpCircle /> Help</Button>
@@ -273,3 +367,5 @@ export default function Home() {
     </div>
   );
 }
+
+    

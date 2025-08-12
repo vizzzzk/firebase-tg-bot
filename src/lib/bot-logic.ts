@@ -9,12 +9,12 @@ const config = {
     UPSTOX_API_KEY: process.env.UPSTOX_API_KEY || "226170d8-02ff-47d2-bb74-3611749f4d8d",
     UPSTOX_API_SECRET: process.env.UPSTOX_API_SECRET || "3yn8j0huzj",
     UPSTOX_REDIRECT_URI: "https://localhost.com",
-    NIFTY_LOT_SIZE: 50,
+    NIFTY_LOT_SIZE: 25,
     BROKERAGE_PER_LOT: 20, // Flat fee per lot per side (buy/sell)
     STT_CTT_CHARGE: 0.000625, // 0.0625% on sell side (premium)
     TRANSACTION_CHARGE: 0.00053, // 0.053% on premium
     GST_CHARGE: 0.18, // 18% on (Brokerage + Transaction Charge)
-    SEBI_CHARGE: 0.000001, // Rs 10 per crore
+    SEBI_CHARGE: 10 / 10000000, // Rs 10 per crore
 };
 
 // ===== PORTFOLIO MANAGEMENT =====
@@ -34,12 +34,24 @@ const PositionSchema = z.object({
 });
 export type Position = z.infer<typeof PositionSchema>;
 
+const TradeHistoryItemSchema = PositionSchema.extend({
+    exitPrice: z.number(),
+    exitTimestamp: z.string(),
+    netPnl: z.number(),
+    grossPnl: z.number(),
+    totalCosts: z.number(),
+});
+export type TradeHistoryItem = z.infer<typeof TradeHistoryItemSchema>;
+
 const PortfolioSchema = z.object({
   positions: z.array(PositionSchema),
   initialFunds: z.number(),
   realizedPnL: z.number(),
   blockedMargin: z.number(),
   lastActiveExpiry: z.string().optional(),
+  winningTrades: z.number(),
+  totalTrades: z.number(),
+  tradeHistory: z.array(TradeHistoryItemSchema),
 });
 export type Portfolio = z.infer<typeof PortfolioSchema>;
 
@@ -233,8 +245,17 @@ class UpstoxAPI {
                 .map(item => {
                     const expDate = item.date;
                     const dte = Math.round((expDate.getTime() - today.getTime()) / (1000 * 3600 * 24));
-                    const lastDayOfMonth = new Date(expDate.getFullYear(), expDate.getMonth() + 1, 0).getDate();
-                    const isMonthly = expDate.getDay() === 4 && (lastDayOfMonth - expDate.getDate()) < 7;
+                    
+                    // Check if it's the last Thursday of the month
+                    const year = expDate.getFullYear();
+                    const month = expDate.getMonth();
+                    const lastDayOfMonth = new Date(year, month + 1, 0);
+                    let lastThursday = lastDayOfMonth;
+                    while (lastThursday.getDay() !== 4) { // 4 = Thursday
+                        lastThursday.setDate(lastThursday.getDate() - 1);
+                    }
+
+                    const isMonthly = expDate.getDate() === lastThursday.getDate();
                     const label = isMonthly ? "(M)" : "(W)";
 
                     return {
@@ -250,7 +271,7 @@ class UpstoxAPI {
 
     static async getOptionChain(accessToken: string | null | undefined, expiryDate: string): Promise<any> {
         const headers = this.getHeaders(accessToken);
-        const url = `https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX|Nifty%2050&expiry_date=${expiryDate}`;
+        const url = `https://api-v2.option/chain?instrument_key=NSE_INDEX|Nifty%2050&expiry_date=${expiryDate}`;
         try {
             const response = await fetch(url, { headers });
             if (!response.ok) {
@@ -399,7 +420,7 @@ class MarketAnalyzer {
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                 const iv = ceData.option_greeks?.iv ?? 0;
+                 const iv = (ceData.option_greeks?.iv ?? 0) / 100;
                  const pop = (1 - Math.abs(delta)) * 100;
 
                  const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop, instrumentKey: ceData.instrument_key };
@@ -421,7 +442,7 @@ class MarketAnalyzer {
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                 const iv = peData.option_greeks?.iv ?? 0;
+                 const iv = (peData.option_greeks?.iv ?? 0) / 100;
                  const pop = (1-Math.abs(delta)) * 100;
                  
                  const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop, instrumentKey: peData.instrument_key };
@@ -527,7 +548,7 @@ export async function getBotResponse(message: string, token: string | null | und
     const mainCommand = parts[0].toLowerCase();
     
     // Command whitelist
-    const allowedCommands = ['start', 'auth', 'help', '/portfolio', '/close', '/reset'];
+    const allowedCommands = ['start', 'auth', 'help', '/portfolio', '/close', '/reset', '/journal'];
     const isExplicitCommand = allowedCommands.includes(mainCommand) || mainCommand.startsWith('exp:') || mainCommand.startsWith('/paper') || mainCommand.startsWith('/close');
     const isAuthCode = /^[a-zA-Z0-9]{6,50}$/.test(command) && !isExplicitCommand;
 
@@ -574,6 +595,7 @@ export async function getBotResponse(message: string, token: string | null | und
 - \`help\`: Shows this help message.
 - \`/paper [CE/PE] [STRIKE] [BUY/SELL] [QTY] [PRICE]\`: Executes a simulated trade.
 - \`/portfolio\`: Shows your current simulated portfolio with MTM.
+- \`/journal\`: Shows a history of all your closed trades.
 - \`/close [POSITION_#]\`: Closes an open position from your portfolio.
 - \`/reset\`: Resets your portfolio and access token.
 
@@ -588,11 +610,11 @@ export async function getBotResponse(message: string, token: string | null | und
             return { type: 'error', message: helpText.replace(/`([^`]+)`/g, '**$1**'), portfolio };
             
         case '/reset':
-            return { type: 'reset', message: 'Portfolio has been reset successfully.', portfolio: { positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0 }};
+            return { type: 'reset', message: 'Portfolio has been reset successfully.', portfolio: { positions: [], initialFunds: 400000, realizedPnL: 0, blockedMargin: 0, winningTrades: 0, totalTrades: 0, tradeHistory: [] }};
 
         case '/paper':
             if (!isMarketOpen()) {
-                return { type: 'error', message: `The market is currently closed. Paper trading is only allowed between 9:15 AM and 3:30 PM IST, Monday to Friday.`, portfolio };
+                return { type: 'error', message: `The market is currently closed. Paper trading is only allowed between 9:15 AM and 3:30 PM IST, Monday to Friday. Please try again during market hours.`, portfolio };
             }
 
             if (parts.length === 6) {
@@ -627,7 +649,7 @@ export async function getBotResponse(message: string, token: string | null | und
                 const costs = calculateCosts(price, quantity, action.toUpperCase() as 'BUY'|'SELL');
 
                 const newPosition: Position = {
-                    id: portfolio.positions.length > 0 ? Math.max(...portfolio.positions.map(p => p.id)) + 1 : 1,
+                    id: portfolio.positions.length + portfolio.tradeHistory.length > 0 ? Math.max(...portfolio.positions.map(p => p.id), ...portfolio.tradeHistory.map(t => t.id)) + 1 : 1,
                     type: type.toUpperCase() as 'CE' | 'PE',
                     strike: strike,
                     action: action.toUpperCase() as 'BUY' | 'SELL',
@@ -669,12 +691,14 @@ export async function getBotResponse(message: string, token: string | null | und
         case '/portfolio':
             const totalFunds = portfolio.initialFunds + portfolio.realizedPnL;
             const availableFundsPortfolio = totalFunds - portfolio.blockedMargin;
+            const winLossRatio = portfolio.totalTrades > 0 ? ((portfolio.winningTrades / portfolio.totalTrades) * 100).toFixed(1) : "N/A";
             
             let unrealizedPnl = 0;
 
             let portfolioMessage = `**🔒 Professional Paper Portfolio**\n\n`;
             portfolioMessage += `- **Total Funds:** Rs. ${totalFunds.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
             portfolioMessage += `- **Realized P&L:** Rs. ${portfolio.realizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}\n`;
+            portfolioMessage += `- **Win/Loss Ratio:** ${winLossRatio}% (${portfolio.winningTrades}/${portfolio.totalTrades} wins)\n`;
             
             if (portfolio.positions.length === 0) {
                  portfolioMessage += `- **Open Positions:** 0\n`;
@@ -738,11 +762,24 @@ export async function getBotResponse(message: string, token: string | null | und
                 const netPnl = grossPnl - totalCosts;
 
                 const updatedPositions = portfolio.positions.filter(p => p.id !== positionIdToClose);
+
+                const closedTrade: TradeHistoryItem = {
+                    ...positionToClose,
+                    exitPrice,
+                    exitTimestamp: new Date().toISOString(),
+                    grossPnl,
+                    netPnl,
+                    totalCosts,
+                };
+                
                 const updatedPortfolio = { 
                     ...portfolio, 
                     positions: updatedPositions, 
                     realizedPnL: portfolio.realizedPnL + netPnl,
                     blockedMargin: portfolio.blockedMargin - positionToClose.marginBlocked,
+                    totalTrades: portfolio.totalTrades + 1,
+                    winningTrades: portfolio.winningTrades + (netPnl > 0 ? 1 : 0),
+                    tradeHistory: [...portfolio.tradeHistory, closedTrade],
                 };
 
                 const closeMessage = `**🔒 Position Closed Successfully**
@@ -814,5 +851,7 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }
+
+    
 
     
