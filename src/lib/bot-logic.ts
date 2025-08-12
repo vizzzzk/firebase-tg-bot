@@ -445,7 +445,7 @@ class MarketAnalyzer {
             if (ceData?.market_data?.ltp > 0) {
                  const delta = ceData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(ceData.market_data.volume ?? 0, ceData.market_data.oi ?? 0);
-                 const iv = (ceData.option_greeks?.iv ?? 0);
+                 const iv = (ceData.option_greeks?.iv ?? 0) / 100;
                  const pop = (1 - Math.abs(delta)) * 100;
 
                  const option: OptionData & {type: 'CE'} = { type: 'CE', strike, delta, iv, liquidity, ltp: ceData.market_data.ltp, pop, instrumentKey: ceData.instrument_key };
@@ -467,7 +467,7 @@ class MarketAnalyzer {
             if (peData?.market_data?.ltp > 0) {
                  const delta = peData.option_greeks?.delta ?? 0;
                  const liquidity = this.calculateLiquidityScore(peData.market_data.volume ?? 0, peData.market_data.oi ?? 0);
-                 const iv = (peData.option_greeks?.iv ?? 0);
+                 const iv = (peData.option_greeks?.iv ?? 0) / 100;
                  const pop = (1-Math.abs(delta)) * 100;
                  
                  const option: OptionData & {type: 'PE'} = { type: 'PE', strike, delta, iv, liquidity, ltp: peData.market_data.ltp, pop, instrumentKey: peData.instrument_key };
@@ -580,8 +580,8 @@ export async function getBotResponse(message: string, token: string | null | und
     const parts = command.split(' ');
     const mainCommand = parts[0].toLowerCase();
     
-    // Regex for auth code improved to include hyphens
-    const isAuthCode = /^[a-zA-Z0-9\-_=]{10,100}$/.test(command) && !command.includes(' ');
+    // Regex for auth code improved to include hyphens and handle shorter codes
+    const isAuthCode = /^[a-zA-Z0-9\-_=]{6,100}$/.test(command) && !command.includes(' ');
 
 
     if (isAuthCode) {
@@ -886,3 +886,5 @@ export async function getBotResponse(message: string, token: string | null | und
     
     return { type: 'error', message: `I didn't understand that. Try 'start' or 'help'.`, portfolio };
 }
+
+    
